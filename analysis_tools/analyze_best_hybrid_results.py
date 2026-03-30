@@ -21,7 +21,7 @@ import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
 DecoderRow = Dict[str, str]
-HYBRID_PRIORITY = ["hybairpwin15", "hybairprobe15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
+HYBRID_PRIORITY = ["hybairpfix15", "hybairpwin15", "hybairprobe15", "hybairprobefix15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
 
 
 def _to_float(value: object) -> float:
@@ -72,8 +72,8 @@ def _extract_hybrid_labels_from_log(path: str) -> List[str]:
             text = f.read()
     except Exception:
         return out
-    for token in text.split('Decoder label : ')[1:]:
-        label = token.split()[0].strip()
+    for m in re.finditer(r'Decoder label\s*:\s*([^\s]+)', text):
+        label = m.group(1).strip()
         if label.startswith('hyb') and label not in out:
             out.append(label)
     return out
@@ -296,16 +296,28 @@ def main() -> int:
                 "SNR(dB) | probe invoke | probe success | probe escalate | probe syndrome drop\n"
                 "--------|--------------|---------------|----------------|-------------------"
             )
+            all_zero_drop = True
+            all_zero_escal = True
             for snr in snrs:
                 hy = diag_idx.get((snr, hybrid_name))
                 if hy is None:
                     continue
+                drop_v = _to_float(hy.get('probe_syndrome_drop_mean_if_invoked'))
+                esc_v = _to_float(hy.get('probe_escalation_rate_if_invoked'))
+                if (not math.isnan(drop_v)) and drop_v > 0.0:
+                    all_zero_drop = False
+                if (not math.isnan(esc_v)) and esc_v > 0.0:
+                    all_zero_escal = False
                 print(
                     f"{snr:7.1f} | {_fmt_pct(_to_float(hy.get('probe_invocation_rate'))):>12} |"
                     f" {_fmt_pct(_to_float(hy.get('probe_success_rate_if_invoked'))):>13} |"
                     f" {_fmt_pct(_to_float(hy.get('probe_escalation_rate_if_invoked'))):>14} |"
                     f" {_fmt_num(_to_float(hy.get('probe_syndrome_drop_mean_if_invoked')), 3):>17}"
                 )
+            if all_zero_drop:
+                print("WARNING: probe saw zero syndrome drop on every invocation. This usually means the progress signal is not being captured, or the tiny probe window is too weak.")
+            if all_zero_escal:
+                print("WARNING: probe never escalated. If invoke>0 but escalate=0 everywhere, the controller is stuck in tiny-only mode.")
 
         sample = diag_idx.get((snrs[0], hybrid_name)) if snrs else None
         if sample and ("ai_gate_skip_rate" in sample or "ai_gate_skip_rate_if_failed" in sample):

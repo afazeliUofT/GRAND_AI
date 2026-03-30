@@ -1,0 +1,22 @@
+{
+  "errors": {},
+  "python": "/scratch/rsadve1/venvs/grand5g/bin/python",
+  "status": {
+    "LDPC5GEncoder_ok": true,
+    "TDL_ok": true,
+    "pyparsing_ok": true,
+    "sionna_ok": true,
+    "six_ok": true
+  }
+}
+[SBATCH CONFIG] SNR_SWEEP=9.0,9.5,10.0,10.5,11.0,11.5,12.0,12.5,13.0
+[SBATCH CONFIG] LDPC_ITERS=15 STAGE1_ITERS=15
+[SBATCH CONFIG] CHANNEL=SIONNA_TDL TDL=B DELAY=4e-7 SPEED=[2.0,6.0] CFO=60.0 CSI_MODE=nr_imperfect
+[SBATCH CONFIG] RUN_RECEIVER9=1 SNAPSHOTS=4,8,12 GATE=4 policy=probe_moe_roi_fix selection=ai_window_roi expected=hybairpfix15 dynamic=1 tiny/full/meta caps=2/2/2
+Numba threads: 64
+[HW model]  {'fclk_mhz': 800, 'ldpc_edges_per_cycle': 64, 'ldpc_bits_per_cycle_hd': 64, 'ldpc_iter_overhead_cycles': 20, 'grand_edges_per_cycle': 64, 'grand_checks_per_cycle': 64, 'grand_batch_overhead_cycles': 200, 'grand_abs_per_cycle': 64, 'grand_sort_elem_log2_per_cycle': 64, 'grand_cost_add_per_cycle': 64, 'grand_patsort_patlog2_per_cycle': 64, 'cluster_pair_edges_per_cycle': 0}
+[RUN_EXPERIMENTS] codes=['sionna5g']  snr_sweep=[9.0, 9.5, 10.0, 10.5, 11.0, 11.5, 12.0, 12.5, 13.0]  out_dir=results/run_best_hybrid_30568300
+[RUN_EXPERIMENTS] mc_cfg=AdaptiveMCConfig(target_frame_errors=120, min_frames=0, max_frames=220000)
+Fast decoding structures prepared: 20488 edges
+[RUN_EXPERIMENTS] Built code: sionna5g_k1024_n2048_qm1
+[run_awgn_sweep_for_code] SNR-parallel ON: n_jobs=4, threads/worker=16, backend=loky

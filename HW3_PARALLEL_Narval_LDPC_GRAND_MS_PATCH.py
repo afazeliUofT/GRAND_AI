@@ -5695,6 +5695,51 @@ def run_local_rescue_with_optional_presolver(frame: FrameLog,
             if should_copy:
                 setattr(dst, attr, src_val)
 
+    def _merge_failure_progress(dst: ClusterGrandResult,
+                                *sources: Optional[ClusterGrandResult]) -> None:
+        if dst is None or bool(getattr(dst, "success", False)):
+            return
+        best_syn = int(getattr(dst, "final_syndrome_weight", getattr(dst, "initial_syndrome_weight", 0)) or 0)
+        best_be = int(getattr(dst, "final_bit_errors", getattr(dst, "initial_bit_errors", 0)) or 0)
+        best_src = str(getattr(dst, "stage2_profile_name", "grand") or "grand")
+
+        def _consider(src_obj: Optional[ClusterGrandResult], label: str) -> None:
+            nonlocal best_syn, best_be, best_src
+            if src_obj is None:
+                return
+            candidates = []
+            for attr in ("best_progress_syndrome_weight", "final_syndrome_weight", "restart_best_syndrome_weight", "chase_best_syndrome_weight"):
+                try:
+                    val = getattr(src_obj, attr)
+                except Exception:
+                    continue
+                if val is None:
+                    continue
+                try:
+                    candidates.append(int(val))
+                except Exception:
+                    pass
+            if not candidates:
+                return
+            src_best_syn = min(candidates)
+            try:
+                src_best_be = int(getattr(src_obj, "best_progress_bit_errors", getattr(src_obj, "final_bit_errors", best_be)) or best_be)
+            except Exception:
+                src_best_be = best_be
+            if (src_best_syn < best_syn) or (src_best_syn == best_syn and src_best_be < best_be):
+                best_syn = int(src_best_syn)
+                best_be = int(src_best_be)
+                best_src = str(label)
+
+        for idx, src in enumerate(sources, start=1):
+            _consider(src, f"presolver{idx}")
+
+        setattr(dst, "final_syndrome_weight", int(best_syn))
+        setattr(dst, "best_progress_syndrome_weight", int(best_syn))
+        setattr(dst, "best_progress_bit_errors", int(best_be))
+        setattr(dst, "best_progress_found", int(best_syn < int(getattr(dst, "initial_syndrome_weight", best_syn) or best_syn)))
+        setattr(dst, "best_progress_source", str(best_src))
+
     peel_attrs = [
         "pre_solver_mode_used",
         "pre_solver_attempted",
@@ -5805,6 +5850,7 @@ def run_local_rescue_with_optional_presolver(frame: FrameLog,
         )
         _copy_attrs(res, res_basis, basis_attrs)
         _copy_attrs(res, res_peel, peel_attrs)
+        _merge_failure_progress(res, res_basis, res_peel)
         if (res_basis is not None) or (res_peel is not None):
             setattr(res, "pre_solver_attempted", 1)
             setattr(res, "pre_solver_success", 0)
@@ -5842,6 +5888,7 @@ def run_local_rescue_with_optional_presolver(frame: FrameLog,
         )
         _copy_attrs(res, res_soft, soft_attrs)
         _copy_attrs(res, res_peel, peel_attrs)
+        _merge_failure_progress(res, res_soft, res_peel)
         if (res_soft is not None) or (res_peel is not None):
             setattr(res, "pre_solver_attempted", 1)
             setattr(res, "pre_solver_success", 0)
@@ -5879,6 +5926,7 @@ def run_local_rescue_with_optional_presolver(frame: FrameLog,
         )
         _copy_attrs(res, res_osd, osd_attrs)
         _copy_attrs(res, res_peel, peel_attrs)
+        _merge_failure_progress(res, res_osd, res_peel)
         if (res_osd is not None) or (res_peel is not None):
             setattr(res, "pre_solver_attempted", 1)
             setattr(res, "pre_solver_success", 0)
@@ -5916,6 +5964,7 @@ def run_local_rescue_with_optional_presolver(frame: FrameLog,
         )
         _copy_attrs(res, res_chase, chase_attrs)
         _copy_attrs(res, res_peel, peel_attrs)
+        _merge_failure_progress(res, res_chase, res_peel)
         if (res_chase is not None) or (res_peel is not None):
             setattr(res, "pre_solver_attempted", 1)
             setattr(res, "pre_solver_success", 0)
@@ -6278,6 +6327,29 @@ def run_local_grand_on_union_of_clusters(frame: FrameLog,
     found_flipped = np.array([], dtype=np.int32)
     final_syn_weight = initial_syndrome_weight
     final_bit_errors = initial_bit_errors
+    best_progress_syn_weight = int(initial_syndrome_weight)
+    best_progress_bit_errors = int(initial_bit_errors)
+    best_progress_weight = -1
+    best_progress_flipped = np.array([], dtype=np.int32)
+
+    def _update_best_progress(candidate_syn: int,
+                              candidate_bit_errors: int,
+                              candidate_weight: int,
+                              candidate_flipped: Sequence[int]) -> None:
+        nonlocal best_progress_syn_weight, best_progress_bit_errors, best_progress_weight, best_progress_flipped
+        syn_i = int(candidate_syn)
+        be_i = int(candidate_bit_errors)
+        w_i = int(candidate_weight)
+        better = (
+            syn_i < best_progress_syn_weight
+            or (syn_i == best_progress_syn_weight and be_i < best_progress_bit_errors)
+            or (syn_i == best_progress_syn_weight and be_i == best_progress_bit_errors and (best_progress_weight < 0 or (w_i >= 0 and w_i < best_progress_weight)))
+        )
+        if better:
+            best_progress_syn_weight = int(syn_i)
+            best_progress_bit_errors = int(be_i)
+            best_progress_weight = int(w_i)
+            best_progress_flipped = np.asarray(list(candidate_flipped), dtype=np.int32)
 
     # ---- Counters (tested vs evaluated) ----
     total_edge_visits_tested = 0
@@ -6448,6 +6520,27 @@ def run_local_grand_on_union_of_clusters(frame: FrameLog,
             total_uniq_checks_visited_eval += int(np.maximum(uniq_arr, 0).sum())
             total_uniq_checks_toggled_eval += int(tog_arr.sum())
 
+            # Track the best partial syndrome improvement in this batch as well.
+            if num_batch > 0:
+                try:
+                    syn_w_batch = np.asarray(syn_w_arr, dtype=np.int64)
+                    bit_err_batch = np.asarray(bit_err_arr, dtype=np.int64)
+                    best_rel = min(
+                        range(num_batch),
+                        key=lambda b: (int(syn_w_batch[b]), int(bit_err_batch[b]), int(pattern_items[start_idx + b][1]))
+                    )
+                    best_global_idx = start_idx + int(best_rel)
+                    _, best_w, best_comb = pattern_items[best_global_idx]
+                    best_flipped_batch = [int(search_vars[pos]) for pos in best_comb]
+                    _update_best_progress(
+                        candidate_syn=int(syn_w_batch[best_rel]),
+                        candidate_bit_errors=int(bit_err_batch[best_rel]) if int(bit_err_batch[best_rel]) >= 0 else int(initial_bit_errors),
+                        candidate_weight=int(best_w),
+                        candidate_flipped=best_flipped_batch,
+                    )
+                except Exception:
+                    pass
+
             # Find first success in this batch
             success_rel = -1
             for b in range(num_batch):
@@ -6507,6 +6600,20 @@ def run_local_grand_on_union_of_clusters(frame: FrameLog,
             total_uniq_checks_visited_eval = int(total_uniq_checks_visited_tested)
             total_uniq_checks_toggled_eval = int(total_uniq_checks_toggled_tested)
 
+            if int(syn_w) < int(best_progress_syn_weight):
+                bit_err_progress = _bit_errors_after_flips_from_base(
+                    base_bits=hard_bits_snapshot,
+                    true_bits=frame.c_bits,
+                    base_bit_errors=int(initial_bit_errors),
+                    flipped_vars=flipped,
+                )
+                _update_best_progress(
+                    candidate_syn=int(syn_w),
+                    candidate_bit_errors=int(bit_err_progress),
+                    candidate_weight=int(w),
+                    candidate_flipped=flipped,
+                )
+
             if syn_w == 0:
                 bit_err_cand = _bit_errors_after_flips_from_base(
                     base_bits=hard_bits_snapshot,
@@ -6521,6 +6628,10 @@ def run_local_grand_on_union_of_clusters(frame: FrameLog,
                 final_syn_weight = 0
                 final_bit_errors = int(bit_err_cand)
                 break
+
+    if not found:
+        final_syn_weight = int(best_progress_syn_weight)
+        final_bit_errors = int(best_progress_bit_errors)
 
     # Build result (keep legacy semantics: these are TESTED counters)
     res = ClusterGrandResult(
@@ -6537,6 +6648,12 @@ def run_local_grand_on_union_of_clusters(frame: FrameLog,
         total_unique_checks_toggled=int(total_uniq_checks_toggled_tested),
         patterns_generated=int(patterns_generated),
     )
+
+    setattr(res, "best_progress_syndrome_weight", int(best_progress_syn_weight))
+    setattr(res, "best_progress_bit_errors", int(best_progress_bit_errors))
+    setattr(res, "best_progress_pattern_weight", int(best_progress_weight))
+    setattr(res, "best_progress_found", int(best_progress_syn_weight < int(initial_syndrome_weight)))
+    setattr(res, "best_progress_flipped_vars", np.asarray(best_progress_flipped, dtype=np.int32))
 
     # Attach evaluated counters + front-end meta for hardware-time model
     setattr(res, "patterns_evaluated", int(patterns_evaluated))
@@ -7941,6 +8058,12 @@ def _stage2_syndrome_drop_ratio(res: Optional[ClusterGrandResult]) -> float:
         return 0.0
     sw0 = max(0, int(getattr(res, "initial_syndrome_weight", 0) or 0))
     sw1 = max(0, int(getattr(res, "final_syndrome_weight", sw0) or sw0))
+    best_syn = getattr(res, "best_progress_syndrome_weight", None)
+    if best_syn is not None:
+        try:
+            sw1 = min(sw1, max(0, int(best_syn)))
+        except Exception:
+            pass
     if sw0 <= 0:
         return 0.0
     return float(max(0, sw0 - sw1)) / float(max(1, sw0))
@@ -8020,9 +8143,16 @@ def _ai_probe_plan(meta: Dict[str, float],
     if probe_drop <= 1e-12 and (not strong):
         allow_meta = False
         if regime != "warmup":
-            allow_full = False
-            allow_next = False
-            reason = f"{reason}_no_progress"
+            # Zero measured drop used to force-stop too aggressively. Keep a narrow
+            # escape hatch when the residual still looks locally promising.
+            if local and promise >= (local_promise - 0.04):
+                allow_full = bool(allow_full or (regime in ("rescue", "hard")))
+                allow_next = bool(allow_next or (snapshot_pos < late_cap))
+                reason = f"{reason}_flat_but_local"
+            else:
+                allow_full = False
+                allow_next = False
+                reason = f"{reason}_no_progress"
 
     return str(regime), bool(allow_full), bool(allow_meta), bool(allow_next), str(reason)
 
@@ -8939,7 +9069,7 @@ def run_hybrid_ldpc_grand_adaptive(
                 if not dynamic_gate:
                     gate_schedule = [int(_ai_gate_select_snapshot(snapshot_schedule, ai_gate_cfg))]
 
-                if policy_mode in ("probe_moe_roi", "probe_moe", "probe"):
+                if policy_mode in ("probe_moe_roi_fix", "probe_moe_roi", "probe_moe", "probe_fix", "probe"):
                     active_schedule_for_res = list(gate_schedule)
                     for snap_pos, snap in enumerate(gate_schedule, start=1):
                         snap_i = int(snap)
@@ -10812,7 +10942,7 @@ def run_awgn_sweep_for_code(
                         dec_name = f"hybairwroi{int(it)}"
                     else:
                         dec_name = f"hybairroi{int(it)}"
-                elif policy_mode in ("probe_moe_roi", "probe_moe", "probe"):
+                elif policy_mode in ("probe_moe_roi_fix", "probe_moe_roi", "probe_moe", "probe_fix", "probe"):
                     if selection_mode in window_modes:
                         dec_name = f"hybairpwin{int(it)}"
                     else:

@@ -1,0 +1,56 @@
+2026-03-30 08:16:18.334001: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-03-30 08:16:32.812354: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:467] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1774883793.902650 2187841 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1774883794.481408 2187841 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1774883797.879550 2187841 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1774883797.879634 2187841 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1774883797.879644 2187841 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1774883797.879651 2187841 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+2026-03-30 08:16:38.368914: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_BF16 AVX_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+joblib.externals.loky.process_executor._RemoteTraceback: 
+"""
+Traceback (most recent call last):
+  File "/scratch/rsadve1/venvs/grand5g/lib/python3.11/site-packages/joblib/externals/loky/process_executor.py", line 490, in _process_worker
+    r = call_item()
+        ^^^^^^^^^^^
+  File "/scratch/rsadve1/venvs/grand5g/lib/python3.11/site-packages/joblib/externals/loky/process_executor.py", line 291, in __call__
+    return self.fn(*self.args, **self.kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/rsadve1/venvs/grand5g/lib/python3.11/site-packages/joblib/parallel.py", line 607, in __call__
+    return [func(*args, **kwargs) for func, args, kwargs in self.items]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/rsadve1/venvs/grand5g/lib/python3.11/site-packages/joblib/parallel.py", line 607, in <listcomp>
+    return [func(*args, **kwargs) for func, args, kwargs in self.items]
+            ^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/rsadve1/GRAND_AI/HW3_PARALLEL_Narval_LDPC_GRAND_MS_PATCH.py", line 10973, in _run_one_snr
+    raise RuntimeError(f"Receiver9 decoder mismatch: expected {expected_decoder}, got {dec_name}")
+RuntimeError: Receiver9 decoder mismatch: expected hybairpfix15, got hybairpwin15
+"""
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/scratch/rsadve1/GRAND_AI/HW3_PARALLEL_Narval_LDPC_GRAND_MS_PATCH.py", line 11072, in <module>
+    _run_experiments_main()
+  File "/scratch/rsadve1/GRAND_AI/HW3_PARALLEL_Narval_LDPC_GRAND_MS_PATCH.py", line 11051, in _run_experiments_main
+    run_awgn_sweep_for_code(
+  File "/scratch/rsadve1/GRAND_AI/HW3_PARALLEL_Narval_LDPC_GRAND_MS_PATCH.py", line 10996, in run_awgn_sweep_for_code
+    tasks = Parallel(n_jobs=n_jobs, backend=backend, prefer="processes", batch_size=1)(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/rsadve1/venvs/grand5g/lib/python3.11/site-packages/joblib/parallel.py", line 2072, in __call__
+    return output if self.return_generator else list(output)
+                                                ^^^^^^^^^^^^
+  File "/scratch/rsadve1/venvs/grand5g/lib/python3.11/site-packages/joblib/parallel.py", line 1682, in _get_outputs
+    yield from self._retrieve()
+  File "/scratch/rsadve1/venvs/grand5g/lib/python3.11/site-packages/joblib/parallel.py", line 1784, in _retrieve
+    self._raise_error_fast()
+  File "/scratch/rsadve1/venvs/grand5g/lib/python3.11/site-packages/joblib/parallel.py", line 1859, in _raise_error_fast
+    error_job.get_result(self.timeout)
+  File "/scratch/rsadve1/venvs/grand5g/lib/python3.11/site-packages/joblib/parallel.py", line 758, in get_result
+    return self._return_or_raise()
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/scratch/rsadve1/venvs/grand5g/lib/python3.11/site-packages/joblib/parallel.py", line 773, in _return_or_raise
+    raise self._result
+RuntimeError: Receiver9 decoder mismatch: expected hybairpfix15, got hybairpwin15
