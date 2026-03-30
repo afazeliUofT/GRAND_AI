@@ -20,7 +20,7 @@ import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
 DecoderRow = Dict[str, str]
-HYBRID_PRIORITY = ["hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
+HYBRID_PRIORITY = ["hybairprobe15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
 
 
 def _to_float(value: object) -> float:
@@ -172,6 +172,8 @@ def main() -> int:
         print("INFO: active result is the verified distilled-tree-bandit + ROI rank run.")
     if hybrid_name == "hybairroi15":
         print("INFO: active result is the forced-explore ROI controller run.")
+    if hybrid_name == "hybairprobe15":
+        print("INFO: active result is the probe-and-escalate ROI run.")
 
     log_path = _latest_log_file(repo_root)
     if log_path is not None:
@@ -253,6 +255,24 @@ def main() -> int:
 
         if any((snr, hybrid_name) in diag_idx for snr in snrs):
             print("Tip: if snapshot_success_at_15 stays zero and fallback success stays zero, remove them in the next run.")
+
+        sample = diag_idx.get((snrs[0], hybrid_name)) if snrs else None
+        if sample and ("probe_invocation_rate" in sample):
+            _print_header("Probe-and-escalate behavior")
+            print(
+                "SNR(dB) | probe invoke | probe success | probe escalate | probe syndrome drop\n"
+                "--------|--------------|---------------|----------------|-------------------"
+            )
+            for snr in snrs:
+                hy = diag_idx.get((snr, hybrid_name))
+                if hy is None:
+                    continue
+                print(
+                    f"{snr:7.1f} | {_fmt_pct(_to_float(hy.get('probe_invocation_rate'))):>12} |"
+                    f" {_fmt_pct(_to_float(hy.get('probe_success_rate_if_invoked'))):>13} |"
+                    f" {_fmt_pct(_to_float(hy.get('probe_escalation_rate_if_invoked'))):>14} |"
+                    f" {_fmt_num(_to_float(hy.get('probe_syndrome_drop_mean_if_invoked')), 3):>17}"
+                )
 
         sample = diag_idx.get((snrs[0], hybrid_name)) if snrs else None
         if sample and ("ai_gate_skip_rate" in sample or "ai_gate_skip_rate_if_failed" in sample):

@@ -7198,6 +7198,7 @@ class AIGatedHybridConfig:
       - ``distilled_tree``: a tiny hardware-friendly policy tree.
       - ``distilled_tree_bandit``: distilled tree prior + LinUCB correction.
       - ``distilled_tree_roi``: distilled tree + forced exploration + empirical ROI governor.
+      - ``probe_moe_roi``: always-on tiny probe + adaptive full-rescue escalation.
 
     The distilled-tree modes are meant to approximate a richer teacher policy
     with only a handful of comparisons, which is attractive for GRAND hardware
@@ -7263,6 +7264,24 @@ class AIGatedHybridConfig:
     tree_late_stop_progress: float = 0.01
     tree_late_stop_compactness: float = 0.30
     tree_late_stop_block_concentration: float = 0.08
+    # Probe-and-escalate controller (adaptive-compute MoE style).
+    probe_min_syndrome_drop_full: float = 0.08
+    probe_min_syndrome_drop_continue: float = 0.04
+    probe_min_syndrome_drop_hard: float = 0.12
+    probe_next_snapshot_min_drop: float = 0.03
+    probe_local_compactness: float = 0.16
+    probe_local_block_concentration: float = 0.07
+    probe_local_conflict: float = 0.06
+    probe_local_promise: float = -0.02
+    probe_strong_compactness: float = 0.26
+    probe_strong_block_concentration: float = 0.10
+    probe_strong_conflict: float = 0.09
+    probe_meta_drop: float = 0.16
+    probe_failrate_easy: float = 0.018
+    probe_failrate_hard: float = 0.080
+    probe_failrate_min_frames: int = 192
+    probe_force_tiny_all_failed: bool = True
+    probe_late_snapshot_cap: int = 2
 
 
 class AIGatedHybridState:
@@ -7681,6 +7700,97 @@ def _ai_gate_reward(action_name: str,
     return float(reward)
 
 
+def _stage2_syndrome_drop_ratio(res: Optional[ClusterGrandResult]) -> float:
+    if res is None:
+        return 0.0
+    sw0 = max(0, int(getattr(res, "initial_syndrome_weight", 0) or 0))
+    sw1 = max(0, int(getattr(res, "final_syndrome_weight", sw0) or sw0))
+    if sw0 <= 0:
+        return 0.0
+    return float(max(0, sw0 - sw1)) / float(max(1, sw0))
+
+
+def _ai_probe_regime(stage1_fail_rate_est: float,
+                     frames_seen: int,
+                     cfg: AIGatedHybridConfig) -> str:
+    if int(frames_seen) < max(1, int(getattr(cfg, "probe_failrate_min_frames", 192) or 192)):
+        return "warmup"
+    hard_thr = float(getattr(cfg, "probe_failrate_hard", 0.080) or 0.080)
+    easy_thr = float(getattr(cfg, "probe_failrate_easy", 0.018) or 0.018)
+    if float(stage1_fail_rate_est) >= hard_thr:
+        return "hard"
+    if float(stage1_fail_rate_est) <= easy_thr:
+        return "easy"
+    return "rescue"
+
+
+def _ai_probe_plan(meta: Dict[str, float],
+                   stage1_fail_rate_est: float,
+                   frames_seen: int,
+                   snapshot_pos: int,
+                   probe_drop: float,
+                   cfg: AIGatedHybridConfig) -> Tuple[str, bool, bool, bool, str]:
+    compactness = float(meta.get("compactness", 0.0))
+    block_conc = float(meta.get("block_concentration", 0.0))
+    conflict = float(meta.get("conflict", 0.0))
+    promise = float(meta.get("promise", -1.0))
+
+    local = (
+        compactness >= float(getattr(cfg, "probe_local_compactness", 0.16) or 0.16)
+        and block_conc >= float(getattr(cfg, "probe_local_block_concentration", 0.07) or 0.07)
+        and conflict >= float(getattr(cfg, "probe_local_conflict", 0.06) or 0.06)
+    )
+    strong = (
+        compactness >= float(getattr(cfg, "probe_strong_compactness", 0.26) or 0.26)
+        and block_conc >= float(getattr(cfg, "probe_strong_block_concentration", 0.10) or 0.10)
+        and conflict >= float(getattr(cfg, "probe_strong_conflict", 0.09) or 0.09)
+    )
+
+    regime = _ai_probe_regime(stage1_fail_rate_est, frames_seen, cfg)
+    allow_full = False
+    allow_meta = False
+    allow_next = False
+    reason = "stop"
+
+    full_drop = float(getattr(cfg, "probe_min_syndrome_drop_full", 0.08) or 0.08)
+    cont_drop = float(getattr(cfg, "probe_min_syndrome_drop_continue", 0.04) or 0.04)
+    hard_drop = float(getattr(cfg, "probe_min_syndrome_drop_hard", 0.12) or 0.12)
+    next_drop = float(getattr(cfg, "probe_next_snapshot_min_drop", 0.03) or 0.03)
+    local_promise = float(getattr(cfg, "probe_local_promise", -0.02) or -0.02)
+    meta_drop = float(getattr(cfg, "probe_meta_drop", 0.16) or 0.16)
+    late_cap = max(1, int(getattr(cfg, "probe_late_snapshot_cap", 2) or 2))
+
+    if regime == "hard":
+        allow_full = strong and (probe_drop >= hard_drop or promise >= max(0.02, local_promise))
+        allow_meta = strong and probe_drop >= max(meta_drop, hard_drop)
+        allow_next = (allow_full or allow_meta) and snapshot_pos < late_cap and probe_drop >= next_drop
+        reason = "hard_gate"
+    elif regime == "rescue":
+        allow_full = (probe_drop >= full_drop) or (local and promise >= local_promise and probe_drop >= cont_drop)
+        allow_meta = strong and promise >= max(0.0, local_promise) and probe_drop >= meta_drop
+        allow_next = (local and probe_drop >= next_drop) and snapshot_pos < late_cap
+        reason = "rescue_band"
+    elif regime == "easy":
+        allow_full = local and probe_drop >= cont_drop
+        allow_meta = strong and promise >= 0.04 and probe_drop >= meta_drop
+        allow_next = False
+        reason = "easy_band"
+    else:
+        allow_full = strong or (local and probe_drop >= cont_drop)
+        allow_meta = strong and probe_drop >= max(cont_drop, 0.08)
+        allow_next = snapshot_pos < late_cap and probe_drop >= next_drop
+        reason = "warmup"
+
+    if probe_drop <= 1e-12 and (not strong):
+        allow_meta = False
+        if regime != "warmup":
+            allow_full = False
+            allow_next = False
+            reason = f"{reason}_no_progress"
+
+    return str(regime), bool(allow_full), bool(allow_meta), bool(allow_next), str(reason)
+
+
 # ---- Receiver 9: AI-gated AHR/BGR controller with lightweight AI ranking ----
 RUN_RECEIVER9 = bool(_get_int_env("RUN_RECEIVER9", 0))
 GRAND_AIR_USE_BOOST = bool(_get_int_env("GRAND_AIR_USE_BOOST", _get_int_env("GRAND_AHR_USE_BOOST", _get_int_env("GRAND_USE_BOOST", 1))))
@@ -7850,6 +7960,23 @@ ai_gate_cfg_awgn_air = AIGatedHybridConfig(
     tree_late_stop_progress=_get_float_env("GRAND_AIR_TREE_LATE_STOP_PROGRESS", 0.01),
     tree_late_stop_compactness=_get_float_env("GRAND_AIR_TREE_LATE_STOP_COMPACTNESS", 0.30),
     tree_late_stop_block_concentration=_get_float_env("GRAND_AIR_TREE_LATE_STOP_BLOCK_CONCENTRATION", 0.08),
+    probe_min_syndrome_drop_full=_get_float_env("GRAND_AIR_PROBE_MIN_DROP_FULL", 0.08),
+    probe_min_syndrome_drop_continue=_get_float_env("GRAND_AIR_PROBE_MIN_DROP_CONTINUE", 0.04),
+    probe_min_syndrome_drop_hard=_get_float_env("GRAND_AIR_PROBE_MIN_DROP_HARD", 0.12),
+    probe_next_snapshot_min_drop=_get_float_env("GRAND_AIR_PROBE_NEXT_MIN_DROP", 0.03),
+    probe_local_compactness=_get_float_env("GRAND_AIR_PROBE_LOCAL_COMPACTNESS", 0.16),
+    probe_local_block_concentration=_get_float_env("GRAND_AIR_PROBE_LOCAL_BLOCK_CONCENTRATION", 0.07),
+    probe_local_conflict=_get_float_env("GRAND_AIR_PROBE_LOCAL_CONFLICT", 0.06),
+    probe_local_promise=_get_float_env("GRAND_AIR_PROBE_LOCAL_PROMISE", -0.02),
+    probe_strong_compactness=_get_float_env("GRAND_AIR_PROBE_STRONG_COMPACTNESS", 0.26),
+    probe_strong_block_concentration=_get_float_env("GRAND_AIR_PROBE_STRONG_BLOCK_CONCENTRATION", 0.10),
+    probe_strong_conflict=_get_float_env("GRAND_AIR_PROBE_STRONG_CONFLICT", 0.09),
+    probe_meta_drop=_get_float_env("GRAND_AIR_PROBE_META_DROP", 0.16),
+    probe_failrate_easy=_get_float_env("GRAND_AIR_PROBE_FAILRATE_EASY", 0.018),
+    probe_failrate_hard=_get_float_env("GRAND_AIR_PROBE_FAILRATE_HARD", 0.080),
+    probe_failrate_min_frames=_get_int_env("GRAND_AIR_PROBE_FAILRATE_MIN_FRAMES", 192),
+    probe_force_tiny_all_failed=bool(_get_int_env("GRAND_AIR_PROBE_FORCE_TINY_ALL_FAILED", 1)),
+    probe_late_snapshot_cap=_get_int_env("GRAND_AIR_PROBE_LATE_SNAPSHOT_CAP", 2),
 )
 
 
@@ -8420,6 +8547,11 @@ def run_hybrid_ldpc_grand_adaptive(
     per_frame_ai_gate_decision_count = []
     per_frame_ai_gate_escalated = []
     per_frame_ai_gate_leaf = []
+    per_frame_probe_invoked = []
+    per_frame_probe_success = []
+    per_frame_probe_syndrome_drop = []
+    per_frame_probe_escalated = []
+    per_frame_probe_regime = []
 
     diag_block_size = max(1, int(float(os.getenv("SIONNA_CSI_BLOCK_SC", os.getenv("SIONNA_CSI_PILOT_STRIDE", "1")) or 1)))
 
@@ -8516,80 +8648,179 @@ def run_hybrid_ldpc_grand_adaptive(
             gate_meta = None
             prev_gate_meta = None
             action_rank = {"none": -1, "skip": 0, "tiny": 1, "full": 2, "meta": 3}
+            probe_invoked = 0
+            probe_success = 0
+            probe_drop_value = 0.0
+            probe_escalated = 0
+            probe_regime = "none"
+            frames_seen_so_far = int(n_frames) + 1
+            stage1_fail_rate_est = float(frame_errs_stage1) / float(max(1, frames_seen_so_far))
 
             if (ai_gate_cfg is not None) and (grand_cfg_tiny is not None):
+                policy_mode = str(getattr(ai_gate_cfg, "policy_mode", "linear_ucb") or "linear_ucb").strip().lower()
                 dynamic_gate = bool(getattr(ai_gate_cfg, "dynamic_per_snapshot", True))
                 gate_schedule = list(snapshot_schedule)
                 if not dynamic_gate:
                     gate_schedule = [int(_ai_gate_select_snapshot(snapshot_schedule, ai_gate_cfg))]
 
-                for snap_pos, snap in enumerate(gate_schedule, start=1):
-                    snap_i = int(snap)
-                    x_gate, gate_meta = _extract_ai_gate_context(frame, sim_cfg, snap_i, ai_gate_cfg)
-                    allowed_actions = _ai_gate_allowed_actions(gate_meta, ai_gate_cfg, snapshot_pos=snap_pos)
-                    base_scores, gate_leaf = _ai_gate_base_scores(gate_meta, ai_gate_cfg, snapshot_pos=snap_pos, prev_meta=prev_gate_meta)
-                    if ai_gate_state is not None:
-                        gate_action, gate_confidence, _ = ai_gate_state.choose(x_gate, base_scores, allowed_actions, ai_gate_cfg)
-                    else:
-                        gate_action = max(allowed_actions, key=lambda a: base_scores.get(a, -1e9)) if allowed_actions else "skip"
-                        gate_confidence = 0.0
-
-                    if ai_gate_decision_count == 0:
-                        ai_gate_first_action = str(gate_action)
-                        ai_gate_snapshot = int(snap_i)
-                    elif action_rank.get(str(gate_action), -1) > action_rank.get(str(ai_gate_action), -1):
-                        ai_gate_escalated = 1
-
-                    if action_rank.get(str(gate_action), -1) >= action_rank.get(str(ai_gate_action), -1):
-                        ai_gate_action = str(gate_action)
-                        ai_gate_confidence = float(gate_confidence)
+                if policy_mode in ("probe_moe_roi", "probe_moe", "probe"):
+                    active_schedule_for_res = list(gate_schedule)
+                    for snap_pos, snap in enumerate(gate_schedule, start=1):
+                        snap_i = int(snap)
+                        x_gate, gate_meta = _extract_ai_gate_context(frame, sim_cfg, snap_i, ai_gate_cfg)
+                        ai_gate_snapshot = int(snap_i) if ai_gate_snapshot == 0 else ai_gate_snapshot
+                        ai_gate_first_action = "tiny" if ai_gate_decision_count == 0 else ai_gate_first_action
+                        ai_gate_decision_count += 1
                         ai_gate_promise = float(gate_meta.get("promise", np.nan))
-                        ai_gate_leaf = str(gate_leaf)
+                        ai_gate_confidence = float(np.clip(0.55 + 0.35 * max(0.0, float(gate_meta.get("compactness", 0.0))), 0.0, 1.0))
 
-                    ai_gate_decision_count += 1
-                    prev_gate_meta = dict(gate_meta)
-
-                    if str(gate_action) == "skip":
-                        stage2_success_profile = "skip"
+                        # Always run the tiny probe on failed frames for this policy.
+                        stage2_invoked = True
+                        probe_invoked = 1
+                        snapshot_attempts += 1
                         snapshot_last_iter = int(snap_i)
-                        continue
 
-                    stage2_invoked = True
-                    snapshot_attempts += 1
-                    snapshot_last_iter = int(snap_i)
-                    if str(gate_action) == "tiny":
-                        stage2_profiles = [("ai_tiny", grand_cfg_tiny, grand_cfg_boost_tiny)]
-                    elif str(gate_action) == "meta":
-                        stage2_profiles = [("ai_full", grand_cfg, grand_cfg_boost)]
-                        if grand_cfg_fallback is not None:
-                            stage2_profiles.append((fallback_label or str(getattr(grand_cfg_fallback, "pre_solver_mode", "fallback")), grand_cfg_fallback, grand_cfg_boost_fallback))
-                    else:
-                        stage2_profiles = [("ai_full", grand_cfg, grand_cfg_boost)]
-
-                    for profile_name, profile_cfg, profile_boost in stage2_profiles:
-                        res_snap, res_attempts = _run_stage2_single_snapshot(
+                        res_probe, probe_attempts = _run_stage2_single_snapshot(
                             frame=frame,
                             sim_cfg=sim_cfg,
                             snapshot_iter=snap_i,
-                            grand_cfg=profile_cfg,
-                            grand_cfg_boost=profile_boost,
+                            grand_cfg=grand_cfg_tiny,
+                            grand_cfg_boost=grand_cfg_boost_tiny,
                         )
-                        for res_try in res_attempts:
+                        for res_try in probe_attempts:
                             setattr(res_try, "snapshot_iter_used", snap_i)
-                            setattr(res_try, "stage2_profile_name", profile_name)
+                            setattr(res_try, "stage2_profile_name", "probe_tiny")
                             hw_c_grand += grand_hw_cycles_from_result(res_try, sim_cfg, hw_model)
-                        attempt_results.extend(res_attempts)
-                        if res_snap is not None:
-                            res_final = res_snap
-                            setattr(res_final, "stage2_profile_name", profile_name)
-                            if bool(res_snap.success):
-                                snapshot_success_iter = snap_i
-                                stage2_success_profile = profile_name
-                                break
-                    if stage2_success_profile not in ("stage1", "skip"):
-                        break
+                        attempt_results.extend(probe_attempts)
 
-                active_schedule_for_res = gate_schedule if gate_schedule else list(snapshot_schedule)
+                        if res_probe is not None:
+                            res_final = res_probe
+                            setattr(res_final, "stage2_profile_name", "probe_tiny")
+                            probe_drop_value = _stage2_syndrome_drop_ratio(res_probe)
+                            if bool(res_probe.success):
+                                probe_success = 1
+                                ai_gate_action = "tiny"
+                                ai_gate_leaf = "probe_success"
+                                snapshot_success_iter = snap_i
+                                stage2_success_profile = "probe_tiny"
+                                break
+
+                        probe_regime, allow_full, allow_meta, allow_next, plan_reason = _ai_probe_plan(
+                            meta=gate_meta,
+                            stage1_fail_rate_est=stage1_fail_rate_est,
+                            frames_seen=frames_seen_so_far,
+                            snapshot_pos=snap_pos,
+                            probe_drop=probe_drop_value,
+                            cfg=ai_gate_cfg,
+                        )
+                        ai_gate_leaf = f"probe_{probe_regime}_{plan_reason}"
+                        ai_gate_action = "tiny"
+
+                        if allow_full or allow_meta:
+                            probe_escalated = 1
+                            ai_gate_escalated = 1
+                            ai_gate_action = "full"
+                            stage2_profiles = [("probe_full", grand_cfg, grand_cfg_boost)]
+                            if allow_meta and grand_cfg_fallback is not None:
+                                stage2_profiles.append((fallback_label or str(getattr(grand_cfg_fallback, "pre_solver_mode", "fallback")), grand_cfg_fallback, grand_cfg_boost_fallback))
+
+                            for profile_name, profile_cfg, profile_boost in stage2_profiles:
+                                res_snap, res_attempts = _run_stage2_single_snapshot(
+                                    frame=frame,
+                                    sim_cfg=sim_cfg,
+                                    snapshot_iter=snap_i,
+                                    grand_cfg=profile_cfg,
+                                    grand_cfg_boost=profile_boost,
+                                )
+                                for res_try in res_attempts:
+                                    setattr(res_try, "snapshot_iter_used", snap_i)
+                                    setattr(res_try, "stage2_profile_name", profile_name)
+                                    hw_c_grand += grand_hw_cycles_from_result(res_try, sim_cfg, hw_model)
+                                attempt_results.extend(res_attempts)
+                                if res_snap is not None:
+                                    res_final = res_snap
+                                    setattr(res_final, "stage2_profile_name", profile_name)
+                                    if bool(res_snap.success):
+                                        snapshot_success_iter = snap_i
+                                        stage2_success_profile = profile_name
+                                        break
+                            if stage2_success_profile not in ("stage1", "skip"):
+                                break
+
+                        if not allow_next:
+                            stage2_success_profile = "probe_stop" if stage2_success_profile == "stage1" else stage2_success_profile
+                            break
+
+                    # Use the actual schedule we attempted for aggregation.
+                    active_schedule_for_res = np.asarray(list(gate_schedule), dtype=np.int32)
+                else:
+                    for snap_pos, snap in enumerate(gate_schedule, start=1):
+                        snap_i = int(snap)
+                        x_gate, gate_meta = _extract_ai_gate_context(frame, sim_cfg, snap_i, ai_gate_cfg)
+                        allowed_actions = _ai_gate_allowed_actions(gate_meta, ai_gate_cfg, snapshot_pos=snap_pos)
+                        base_scores, gate_leaf = _ai_gate_base_scores(gate_meta, ai_gate_cfg, snapshot_pos=snap_pos, prev_meta=prev_gate_meta)
+                        if ai_gate_state is not None:
+                            gate_action, gate_confidence, _ = ai_gate_state.choose(x_gate, base_scores, allowed_actions, ai_gate_cfg)
+                        else:
+                            gate_action = max(allowed_actions, key=lambda a: base_scores.get(a, -1e9)) if allowed_actions else "skip"
+                            gate_confidence = 0.0
+
+                        if ai_gate_decision_count == 0:
+                            ai_gate_first_action = str(gate_action)
+                            ai_gate_snapshot = int(snap_i)
+                        elif action_rank.get(str(gate_action), -1) > action_rank.get(str(ai_gate_action), -1):
+                            ai_gate_escalated = 1
+
+                        if action_rank.get(str(gate_action), -1) >= action_rank.get(str(ai_gate_action), -1):
+                            ai_gate_action = str(gate_action)
+                            ai_gate_confidence = float(gate_confidence)
+                            ai_gate_promise = float(gate_meta.get("promise", np.nan))
+                            ai_gate_leaf = str(gate_leaf)
+
+                        ai_gate_decision_count += 1
+                        prev_gate_meta = dict(gate_meta)
+
+                        if str(gate_action) == "skip":
+                            stage2_success_profile = "skip"
+                            snapshot_last_iter = int(snap_i)
+                            continue
+
+                        stage2_invoked = True
+                        snapshot_attempts += 1
+                        snapshot_last_iter = int(snap_i)
+                        if str(gate_action) == "tiny":
+                            stage2_profiles = [("ai_tiny", grand_cfg_tiny, grand_cfg_boost_tiny)]
+                        elif str(gate_action) == "meta":
+                            stage2_profiles = [("ai_full", grand_cfg, grand_cfg_boost)]
+                            if grand_cfg_fallback is not None:
+                                stage2_profiles.append((fallback_label or str(getattr(grand_cfg_fallback, "pre_solver_mode", "fallback")), grand_cfg_fallback, grand_cfg_boost_fallback))
+                        else:
+                            stage2_profiles = [("ai_full", grand_cfg, grand_cfg_boost)]
+
+                        for profile_name, profile_cfg, profile_boost in stage2_profiles:
+                            res_snap, res_attempts = _run_stage2_single_snapshot(
+                                frame=frame,
+                                sim_cfg=sim_cfg,
+                                snapshot_iter=snap_i,
+                                grand_cfg=profile_cfg,
+                                grand_cfg_boost=profile_boost,
+                            )
+                            for res_try in res_attempts:
+                                setattr(res_try, "snapshot_iter_used", snap_i)
+                                setattr(res_try, "stage2_profile_name", profile_name)
+                                hw_c_grand += grand_hw_cycles_from_result(res_try, sim_cfg, hw_model)
+                            attempt_results.extend(res_attempts)
+                            if res_snap is not None:
+                                res_final = res_snap
+                                setattr(res_final, "stage2_profile_name", profile_name)
+                                if bool(res_snap.success):
+                                    snapshot_success_iter = snap_i
+                                    stage2_success_profile = profile_name
+                                    break
+                        if stage2_success_profile not in ("stage1", "skip"):
+                            break
+
+                    active_schedule_for_res = gate_schedule if gate_schedule else list(snapshot_schedule)
             else:
                 stage2_profiles = [(str(getattr(grand_cfg, "pre_solver_mode", "primary")), grand_cfg, grand_cfg_boost)]
                 active_schedule_for_res = list(snapshot_schedule)
@@ -8632,7 +8863,7 @@ def run_hybrid_ldpc_grand_adaptive(
                 res = _aggregate_stage2_attempts(
                     final_res=res_final,
                     attempts=attempt_results,
-                    snapshot_schedule=np.asarray(active_schedule_for_res if active_schedule_for_res else snapshot_schedule, dtype=np.int32),
+                    snapshot_schedule=np.asarray(active_schedule_for_res if active_schedule_for_res is not None else snapshot_schedule, dtype=np.int32),
                     snapshot_attempts_count=snapshot_attempts,
                     snapshot_success_iter=snapshot_success_iter,
                     snapshot_last_iter=snapshot_last_iter,
@@ -8691,9 +8922,20 @@ def run_hybrid_ldpc_grand_adaptive(
                     cfg=ai_gate_cfg,
                 )
                 policy_mode = str(getattr(ai_gate_cfg, "policy_mode", "linear_ucb") or "linear_ucb").strip().lower()
-                if policy_mode in ("linear_ucb", "distilled_tree_bandit", "tree_bandit", "dt_bandit"):
+                if policy_mode in ("linear_ucb", "distilled_tree_bandit", "tree_bandit", "dt_bandit", "distilled_tree_roi", "tree_roi", "dt_roi", "probe_moe_roi", "probe_moe", "probe"):
                     ai_gate_state.update(str(ai_gate_action), x_gate, reward)
 
+            per_frame_probe_invoked.append(int(probe_invoked))
+            per_frame_probe_success.append(int(probe_success))
+            per_frame_probe_syndrome_drop.append(float(probe_drop_value))
+            per_frame_probe_escalated.append(int(probe_escalated))
+            per_frame_probe_regime.append(str(probe_regime))
+        else:
+            per_frame_probe_invoked.append(0)
+            per_frame_probe_success.append(0)
+            per_frame_probe_syndrome_drop.append(0.0)
+            per_frame_probe_escalated.append(0)
+            per_frame_probe_regime.append("none")
         total_bit_errs_after += be_after
         if be_after > 0:
             frame_errs_after += 1
@@ -8877,6 +9119,11 @@ def run_hybrid_ldpc_grand_adaptive(
         "per_frame_ai_gate_decision_count": np.array(per_frame_ai_gate_decision_count, dtype=np.int32),
         "per_frame_ai_gate_escalated": np.array(per_frame_ai_gate_escalated, dtype=np.int8),
         "per_frame_ai_gate_leaf": np.array(per_frame_ai_gate_leaf, dtype=object),
+        "per_frame_probe_invoked": np.array(per_frame_probe_invoked, dtype=np.int8),
+        "per_frame_probe_success": np.array(per_frame_probe_success, dtype=np.int8),
+        "per_frame_probe_syndrome_drop": np.array(per_frame_probe_syndrome_drop, dtype=np.float32),
+        "per_frame_probe_escalated": np.array(per_frame_probe_escalated, dtype=np.int8),
+        "per_frame_probe_regime": np.array(per_frame_probe_regime, dtype=object),
         "grand_ai_gate_enabled": bool(ai_gate_cfg is not None),
         "grand_ai_gate_policy_mode": str(getattr(ai_gate_cfg, "policy_mode", "none")) if ai_gate_cfg is not None else "none",
         "grand_selection_mode": str(getattr(grand_cfg, "selection_mode", "llr")),
@@ -9355,6 +9602,7 @@ def save_awgn_results(
         "avg_stage1_block_concentration_if_invoked", "p95_stage1_block_concentration_if_invoked",
         "avg_snapshot_attempts_if_invoked", "avg_snapshot_success_iter_if_fixed",
         "primary_success_rate_if_invoked", "fallback_success_rate_if_invoked",
+        "probe_invocation_rate", "probe_success_rate_if_invoked", "probe_escalation_rate_if_invoked", "probe_syndrome_drop_mean_if_invoked",
         "ai_gate_enabled", "ai_gate_policy_mode", "ai_gate_skip_rate", "ai_gate_tiny_rate", "ai_gate_full_rate", "ai_gate_meta_rate",
         "ai_gate_first_skip_rate", "ai_gate_decision_count_mean_if_invoked", "ai_gate_escalation_rate_if_invoked",
         "ai_gate_confidence_mean_if_invoked", "ai_gate_promise_mean_if_invoked",
@@ -9433,6 +9681,24 @@ def save_awgn_results(
                             row["primary_success_rate_if_invoked"] = float(np.mean(np.asarray([str(x) == primary_profile for x in profile[mask]], dtype=np.float64)))
                         if fallback_profile:
                             row["fallback_success_rate_if_invoked"] = float(np.mean(np.asarray([str(x) == fallback_profile for x in profile[mask]], dtype=np.float64)))
+                    pprobe = np.asarray(stats.get("per_frame_probe_invoked", []), dtype=np.int8)
+                    ppsucc = np.asarray(stats.get("per_frame_probe_success", []), dtype=np.int8)
+                    ppdrop = np.asarray(stats.get("per_frame_probe_syndrome_drop", []), dtype=np.float64)
+                    ppescal = np.asarray(stats.get("per_frame_probe_escalated", []), dtype=np.int8)
+                    if pprobe.size == invoked.size:
+                        row["probe_invocation_rate"] = _safe_mean(pprobe[mask])
+                    if ppsucc.size == invoked.size and pprobe.size == invoked.size:
+                        pmask = mask & (pprobe.astype(bool))
+                        if pmask.any():
+                            row["probe_success_rate_if_invoked"] = _safe_mean(ppsucc[pmask])
+                    if ppescal.size == invoked.size and pprobe.size == invoked.size:
+                        pmask = mask & (pprobe.astype(bool))
+                        if pmask.any():
+                            row["probe_escalation_rate_if_invoked"] = _safe_mean(ppescal[pmask])
+                    if ppdrop.size == invoked.size and pprobe.size == invoked.size:
+                        pmask = mask & (pprobe.astype(bool))
+                        if pmask.any():
+                            row["probe_syndrome_drop_mean_if_invoked"] = _safe_mean(ppdrop[pmask])
                     if gact.size == invoked.size:
                         row["ai_gate_skip_rate"] = float(np.mean(np.asarray([str(x) == "skip" for x in gact[mask]], dtype=np.float64)))
                         row["ai_gate_tiny_rate"] = float(np.mean(np.asarray([str(x) == "tiny" for x in gact[mask]], dtype=np.float64)))
@@ -10255,6 +10521,8 @@ def run_awgn_sweep_for_code(
                     dec_name = f"hybairdtroi{int(it)}" if selection_mode in ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi") else f"hybairdt{int(it)}"
                 elif policy_mode in ("distilled_tree_roi", "tree_roi", "dt_roi"):
                     dec_name = f"hybairroi{int(it)}" if selection_mode in ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi") else f"hybairroi{int(it)}"
+                elif policy_mode in ("probe_moe_roi", "probe_moe", "probe"):
+                    dec_name = f"hybairprobe{int(it)}" if selection_mode in ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi") else f"hybairprobe{int(it)}"
                 else:
                     dec_name = f"hybair{int(it)}"
                 snapshot_schedule = _resolve_grand_snapshot_schedule(int(it))
