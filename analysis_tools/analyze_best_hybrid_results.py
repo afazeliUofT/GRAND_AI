@@ -20,7 +20,7 @@ import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
 DecoderRow = Dict[str, str]
-HYBRID_PRIORITY = ["hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
+HYBRID_PRIORITY = ["hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
 
 
 def _to_float(value: object) -> float:
@@ -168,6 +168,10 @@ def main() -> int:
     print(f"Hybrid analyzed : {hybrid_name}")
     if hybrid_name == "hybair15":
         print("WARNING: active result is still heuristic AIR, not the distilled-tree run.")
+    if hybrid_name == "hybairdtbroi15":
+        print("INFO: active result is the verified distilled-tree-bandit + ROI rank run.")
+    if hybrid_name == "hybairroi15":
+        print("INFO: active result is the forced-explore ROI controller run.")
 
     log_path = _latest_log_file(repo_root)
     if log_path is not None:
@@ -229,26 +233,37 @@ def main() -> int:
             "SNR(dB) | invoke | true-fix if invoked | avg tries | avg success snap\n"
             "--------|--------|----------------------|-----------|-----------------"
         )
+        zero_invocation = True
         for snr in snrs:
             hy = diag_idx.get((snr, hybrid_name))
             if hy is None:
                 continue
+            inv = _to_float(hy.get('stage2_invocation_rate'))
+            if (not math.isnan(inv)) and inv > 0.0:
+                zero_invocation = False
             print(
-                f"{snr:7.1f} | {_fmt_pct(_to_float(hy.get('stage2_invocation_rate'))):>6} |"
+                f"{snr:7.1f} | {_fmt_pct(inv):>6} |"
                 f" {_fmt_pct(_to_float(hy.get('stage2_true_fix_rate_if_invoked'))):>20} |"
                 f" {_fmt_num(_to_float(hy.get('avg_snapshot_attempts_if_invoked')), 3):>9} |"
                 f" {_fmt_num(_to_float(hy.get('avg_snapshot_success_iter_if_fixed')), 3):>15}"
             )
 
+        if zero_invocation:
+            print("WARNING: stage-2 invocation is zero at all SNR points, so the hybrid collapsed to LDPC-only behavior.")
+
         if any((snr, hybrid_name) in diag_idx for snr in snrs):
             print("Tip: if snapshot_success_at_15 stays zero and fallback success stays zero, remove them in the next run.")
 
         sample = diag_idx.get((snrs[0], hybrid_name)) if snrs else None
-        if sample and "ai_gate_skip_rate" in sample:
+        if sample and ("ai_gate_skip_rate" in sample or "ai_gate_skip_rate_if_failed" in sample):
             _print_header("AI gate behavior")
             sample_policy = str(sample.get("ai_gate_policy_mode", "")).strip() if sample else ""
             if sample_policy:
                 print(f"Policy mode: {sample_policy}")
+            use_failed = "ai_gate_skip_rate_if_failed" in sample
+            suffix = "_if_failed" if use_failed else ""
+            scope = "failed stage-1 frames" if use_failed else "invoked stage-2 frames"
+            print(f"Scope: {scope}")
             print(
                 "SNR(dB) | skip | first skip | tiny | full | meta | decisions | escal. | gate conf | gate promise\n"
                 "--------|------|------------|------|------|------|-----------|--------|-----------|-------------"
@@ -258,15 +273,15 @@ def main() -> int:
                 if hy is None:
                     continue
                 print(
-                    f"{snr:7.1f} | {_fmt_pct(_to_float(hy.get('ai_gate_skip_rate'))):>4} |"
-                    f" {_fmt_pct(_to_float(hy.get('ai_gate_first_skip_rate'))):>10} |"
-                    f" {_fmt_pct(_to_float(hy.get('ai_gate_tiny_rate'))):>4} |"
-                    f" {_fmt_pct(_to_float(hy.get('ai_gate_full_rate'))):>4} |"
-                    f" {_fmt_pct(_to_float(hy.get('ai_gate_meta_rate'))):>4} |"
-                    f" {_fmt_num(_to_float(hy.get('ai_gate_decision_count_mean_if_invoked')), 3):>9} |"
-                    f" {_fmt_pct(_to_float(hy.get('ai_gate_escalation_rate_if_invoked'))):>6} |"
-                    f" {_fmt_num(_to_float(hy.get('ai_gate_confidence_mean_if_invoked')), 3):>9} |"
-                    f" {_fmt_num(_to_float(hy.get('ai_gate_promise_mean_if_invoked')), 3):>11}"
+                    f"{snr:7.1f} | {_fmt_pct(_to_float(hy.get('ai_gate_skip_rate' + suffix))):>4} |"
+                    f" {_fmt_pct(_to_float(hy.get('ai_gate_first_skip_rate' + suffix))):>10} |"
+                    f" {_fmt_pct(_to_float(hy.get('ai_gate_tiny_rate' + suffix))):>4} |"
+                    f" {_fmt_pct(_to_float(hy.get('ai_gate_full_rate' + suffix))):>4} |"
+                    f" {_fmt_pct(_to_float(hy.get('ai_gate_meta_rate' + suffix))):>4} |"
+                    f" {_fmt_num(_to_float(hy.get('ai_gate_decision_count_mean' + ('_if_failed' if use_failed else '_if_invoked'))), 3):>9} |"
+                    f" {_fmt_pct(_to_float(hy.get('ai_gate_escalation_rate' + ('_if_failed' if use_failed else '_if_invoked')))):>6} |"
+                    f" {_fmt_num(_to_float(hy.get('ai_gate_confidence_mean' + ('_if_failed' if use_failed else '_if_invoked'))), 3):>9} |"
+                    f" {_fmt_num(_to_float(hy.get('ai_gate_promise_mean' + ('_if_failed' if use_failed else '_if_invoked'))), 3):>11}"
                 )
 
         _print_header("Residual structure on invoked frames")
@@ -308,8 +323,8 @@ def main() -> int:
 
     _print_header("Main conclusion")
     print("1) The target outcome is higher FER gain than hybahr15 with a clearly lower latency factor.")
-    print("2) For distilled-tree AIR, first-skip and tiny rates should rise while FER stays close or improves.")
-    print("3) If FER is still flat, tune the tree thresholds first, then tiny/full/meta budgets.")
+    print("2) If stage-2 invocation collapses to zero, the gate is too conservative and the run is effectively plain LDPC.")
+    print("3) The next target is meaningful FER gain with stage-2 active on a controlled minority of failed frames, not on all frames.")
     return 0
 
 

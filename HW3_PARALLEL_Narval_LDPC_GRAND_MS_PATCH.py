@@ -7197,13 +7197,14 @@ class AIGatedHybridConfig:
       - ``linear_ucb``: original compact contextual-bandit gate.
       - ``distilled_tree``: a tiny hardware-friendly policy tree.
       - ``distilled_tree_bandit``: distilled tree prior + LinUCB correction.
+      - ``distilled_tree_roi``: distilled tree + forced exploration + empirical ROI governor.
 
     The distilled-tree modes are meant to approximate a richer teacher policy
     with only a handful of comparisons, which is attractive for GRAND hardware
     control.
     """
     gate_snapshot_policy: str = "first"   # "first", "final", or integer-like token
-    policy_mode: str = "distilled_tree_bandit"   # "linear_ucb", "distilled_tree", or "distilled_tree_bandit"
+    policy_mode: str = "distilled_tree_roi"   # preferred low-latency controller
     dynamic_per_snapshot: bool = True      # re-evaluate the gate at each saved LDPC snapshot
     tiny_snapshot_cap: int = 2
     full_snapshot_cap: int = 3
@@ -7217,31 +7218,43 @@ class AIGatedHybridConfig:
     cost_scale_cycles: float = 240000.0
     improvement_reward: float = 0.35
     true_fix_reward: float = 1.15
+    skip_failure_penalty: float = 0.26
     tiny_cost_prior: float = 0.06
     full_cost_prior: float = 0.18
     meta_cost_prior: float = 0.28
     meta_min_compactness: float = 0.34
     meta_min_conflict: float = 0.08
-    force_skip_diffuse: float = 0.82
-    force_skip_promise: float = -0.08
+    force_skip_diffuse: float = 0.95
+    force_skip_promise: float = -0.22
+    warmup_min_trials_per_action: int = 8
+    warmup_snapshot_cap: int = 1
+    suppress_skip_during_warmup: bool = True
+    cold_start_bonus: float = 0.55
+    roi_score_weight: float = 0.75
+    roi_disable_min_trials: int = 6
+    roi_disable_threshold: float = -0.03
+    roi_disable_penalty: float = 0.40
+    roi_promote_min_trials: int = 4
+    roi_promote_threshold: float = 0.08
+    roi_promote_weight: float = 0.30
     # Distilled-tree thresholds. These are seeded from the current committed
     # diagnostics, where diffuse wide residuals dominate the expensive failures.
-    tree_diffuse_skip: float = 0.82
-    tree_skip_union_size: int = 208
-    tree_skip_promise: float = -0.065
-    tree_skip_block_concentration: float = 0.08
+    tree_diffuse_skip: float = 0.92
+    tree_skip_union_size: int = 448
+    tree_skip_promise: float = -0.12
+    tree_skip_block_concentration: float = 0.06
     tree_tiny_compactness: float = 0.16
     tree_tiny_uncertainty: float = 0.20
-    tree_tiny_block_concentration: float = 0.07
+    tree_tiny_block_concentration: float = 0.05
     tree_full_compactness: float = 0.24
     tree_full_uncertainty: float = 0.20
     tree_full_promise: float = -0.05
-    tree_full_block_concentration: float = 0.09
+    tree_full_block_concentration: float = 0.07
     tree_full_conflict: float = 0.06
     tree_meta_compactness: float = 0.38
     tree_meta_conflict: float = 0.09
     tree_meta_promise: float = 0.02
-    tree_meta_block_concentration: float = 0.11
+    tree_meta_block_concentration: float = 0.10
     tree_tiny_rescue_compactness: float = 0.12
     tree_tiny_rescue_uncertainty: float = 0.22
     tree_promote_margin: float = 0.05
@@ -7260,13 +7273,30 @@ class AIGatedHybridState:
         self.b = [np.zeros(int(n_features), dtype=np.float64) for _ in self.action_names]
         self.action_counts = np.zeros(len(self.action_names), dtype=np.int32)
         self.last_reward = np.zeros(len(self.action_names), dtype=np.float64)
+        self.reward_sums = np.zeros(len(self.action_names), dtype=np.float64)
+        self.cost_sums = np.zeros(len(self.action_names), dtype=np.float64)
+        self.improve_counts = np.zeros(len(self.action_names), dtype=np.int32)
+        self.fix_counts = np.zeros(len(self.action_names), dtype=np.int32)
 
     def idx(self, name: str) -> int:
         return int(self._name_to_idx[str(name)])
 
-    def choose(self, x: np.ndarray, base_scores: Dict[str, float], allowed: Sequence[str], cfg: AIGatedHybridConfig) -> Tuple[str, float, Dict[str, float]]:
+    def mean_reward(self, name: str) -> float:
+        idx = self.idx(name)
+        n = int(self.action_counts[idx])
+        return float(self.reward_sums[idx] / n) if n > 0 else float("nan")
+
+    def choose(self,
+               x: np.ndarray,
+               base_scores: Dict[str, float],
+               allowed: Sequence[str],
+               cfg: AIGatedHybridConfig,
+               snapshot_pos: int = 1) -> Tuple[str, float, Dict[str, float]]:
         x = np.asarray(x, dtype=np.float64).reshape(-1)
         allowed_set = set(str(a) for a in allowed)
+        policy_mode = str(getattr(cfg, "policy_mode", "linear_ucb") or "linear_ucb").strip().lower()
+        use_bandit = policy_mode in ("linear_ucb", "distilled_tree_bandit", "tree_bandit", "dt_bandit", "distilled_tree_roi", "tree_roi", "dt_roi")
+        use_tree_only = policy_mode in ("distilled_tree", "tree", "dt")
         scores: Dict[str, float] = {}
         cost_prior = {
             "skip": 0.0,
@@ -7274,16 +7304,45 @@ class AIGatedHybridState:
             "full": float(cfg.full_cost_prior),
             "meta": float(cfg.meta_cost_prior),
         }
-        policy_mode = str(getattr(cfg, "policy_mode", "linear_ucb") or "linear_ucb").strip().lower()
-        use_bandit = policy_mode in ("linear_ucb", "distilled_tree_bandit", "tree_bandit", "dt_bandit")
-        use_tree_only = policy_mode in ("distilled_tree", "tree", "dt")
+
+        cold_candidates = []
+        if int(snapshot_pos) <= max(1, int(getattr(cfg, "warmup_snapshot_cap", 1) or 1)):
+            for name in ("tiny", "full", "meta"):
+                if name in allowed_set and int(self.action_counts[self.idx(name)]) < max(0, int(getattr(cfg, "warmup_min_trials_per_action", 0) or 0)):
+                    cold_candidates.append(name)
+
+        if cold_candidates and bool(getattr(cfg, "suppress_skip_during_warmup", True)):
+            allowed_set = set(cold_candidates)
+
+        if cold_candidates:
+            forced_name = max(
+                cold_candidates,
+                key=lambda n: (
+                    float(base_scores.get(n, -1e9)),
+                    -int(self.action_counts[self.idx(n)]),
+                    -((0 if n == "tiny" else 1) if n == "full" else 2),
+                ),
+            )
+            for name in self.action_names:
+                scores[name] = -1e9
+            scores[forced_name] = float(base_scores.get(forced_name, 0.0)) + float(getattr(cfg, "cold_start_bonus", 0.55) or 0.55)
+            return str(forced_name), 0.60, scores
+
         for name in self.action_names:
             if name not in allowed_set:
                 scores[name] = -1e9
                 continue
             score = float(base_scores.get(name, 0.0)) - float(cost_prior.get(name, 0.0))
+            idx = self.idx(name)
+            n = int(self.action_counts[idx])
+            mean_reward = float(self.reward_sums[idx] / n) if n > 0 else float("nan")
+            if name != "skip" and not math.isnan(mean_reward):
+                score += float(getattr(cfg, "roi_score_weight", 0.0) or 0.0) * mean_reward
+                if n >= max(1, int(getattr(cfg, "roi_disable_min_trials", 1) or 1)) and mean_reward <= float(getattr(cfg, "roi_disable_threshold", -0.03) or -0.03):
+                    score -= float(getattr(cfg, "roi_disable_penalty", 0.40) or 0.40)
+                if n >= max(1, int(getattr(cfg, "roi_promote_min_trials", 1) or 1)) and mean_reward >= float(getattr(cfg, "roi_promote_threshold", 0.08) or 0.08):
+                    score += float(getattr(cfg, "roi_promote_weight", 0.30) or 0.30) * mean_reward
             if use_bandit:
-                idx = self.idx(name)
                 A = self.A[idx]
                 b = self.b[idx]
                 try:
@@ -7306,13 +7365,23 @@ class AIGatedHybridState:
         conf = float(probs[self.idx(best_name)] / denom) if denom > 0.0 else 1.0
         return str(best_name), float(conf), scores
 
-    def update(self, action_name: str, x: np.ndarray, reward: float) -> None:
+    def update(self,
+               action_name: str,
+               x: np.ndarray,
+               reward: float,
+               hw_cycles: float = 0.0,
+               improved: bool = False,
+               true_fix: bool = False) -> None:
         x = np.asarray(x, dtype=np.float64).reshape(-1)
         idx = self.idx(action_name)
         self.A[idx] = self.A[idx] + np.outer(x, x)
         self.b[idx] = self.b[idx] + float(reward) * x
         self.action_counts[idx] += 1
         self.last_reward[idx] = float(reward)
+        self.reward_sums[idx] += float(reward)
+        self.cost_sums[idx] += float(hw_cycles)
+        self.improve_counts[idx] += int(bool(improved))
+        self.fix_counts[idx] += int(bool(true_fix))
 
 
 def _ai_gate_select_snapshot(snapshot_schedule: Sequence[int], cfg: AIGatedHybridConfig) -> int:
@@ -7453,9 +7522,12 @@ def _ai_gate_allowed_actions(meta: Dict[str, float],
     conflict = float(meta.get("conflict", 0.0))
     diffuse = float(meta.get("diffuse", 1.0))
     promise = float(meta.get("promise", -1.0))
+    block_conc = float(meta.get("block_concentration", 0.0))
 
-    if diffuse >= float(getattr(cfg, "force_skip_diffuse", 0.82) or 0.82) or promise <= float(getattr(cfg, "force_skip_promise", -0.08) or -0.08):
+    if diffuse >= float(getattr(cfg, "force_skip_diffuse", 0.95) or 0.95) or promise <= float(getattr(cfg, "force_skip_promise", -0.22) or -0.22):
         allowed = ["skip", "tiny"]
+        if block_conc >= float(getattr(cfg, "tree_full_block_concentration", 0.07) or 0.07) and compactness >= float(getattr(cfg, "tree_full_compactness", 0.24) or 0.24):
+            allowed.append("full")
     else:
         allowed = ["skip", "tiny", "full"]
         if compactness >= float(getattr(cfg, "meta_min_compactness", 0.34) or 0.34) and conflict >= float(getattr(cfg, "meta_min_conflict", 0.08) or 0.08):
@@ -7516,15 +7588,15 @@ def _ai_gate_distilled_tree_scores(meta: Dict[str, float],
     if int(snapshot_pos) > 1 and promise_delta <= late_stop_progress and compactness <= late_stop_compactness and block_conc <= late_stop_block:
         leaf = "late_stop"
         scores = {"skip": 1.18, "tiny": 0.04, "full": -0.78, "meta": -1.05}
-    elif ((diffuse >= float(getattr(cfg, "tree_diffuse_skip", 0.82) or 0.82))
-          or (union_size >= int(getattr(cfg, "tree_skip_union_size", 208) or 208))
-          or (promise <= float(getattr(cfg, "tree_skip_promise", -0.065) or -0.065) and block_conc <= float(getattr(cfg, "tree_skip_block_concentration", 0.08) or 0.08) and num_clusters >= 3)):
-        if block_conc >= float(getattr(cfg, "tree_tiny_block_concentration", 0.07) or 0.07) and compactness >= float(getattr(cfg, "tree_tiny_rescue_compactness", 0.12) or 0.12) and uncertainty >= float(getattr(cfg, "tree_tiny_rescue_uncertainty", 0.22) or 0.22):
+    elif (((diffuse >= float(getattr(cfg, "tree_diffuse_skip", 0.92) or 0.92)) and block_conc <= float(getattr(cfg, "tree_skip_block_concentration", 0.06) or 0.06))
+          or ((union_size >= int(getattr(cfg, "tree_skip_union_size", 448) or 448)) and block_conc <= float(getattr(cfg, "tree_skip_block_concentration", 0.06) or 0.06) and num_clusters >= 3)
+          or (promise <= float(getattr(cfg, "tree_skip_promise", -0.12) or -0.12) and block_conc <= float(getattr(cfg, "tree_skip_block_concentration", 0.06) or 0.06) and num_clusters >= 3)):
+        if block_conc >= float(getattr(cfg, "tree_tiny_block_concentration", 0.05) or 0.05) and compactness >= float(getattr(cfg, "tree_tiny_rescue_compactness", 0.12) or 0.12) and uncertainty >= float(getattr(cfg, "tree_tiny_rescue_uncertainty", 0.22) or 0.22):
             leaf = "diffuse_tiny_salvage"
-            scores = {"skip": 0.64, "tiny": 0.82, "full": -0.62, "meta": -0.88}
+            scores = {"skip": 0.46, "tiny": 0.94, "full": -0.34, "meta": -0.72}
         else:
             leaf = "diffuse_skip"
-            scores = {"skip": 1.20, "tiny": 0.08, "full": -0.90, "meta": -1.15}
+            scores = {"skip": 1.02, "tiny": 0.34, "full": -0.54, "meta": -0.86}
     elif (block_conc >= float(getattr(cfg, "tree_meta_block_concentration", 0.11) or 0.11)
           and compactness >= float(getattr(cfg, "tree_meta_compactness", 0.38) or 0.38)
           and conflict >= float(getattr(cfg, "tree_meta_conflict", 0.09) or 0.09)
@@ -7583,22 +7655,27 @@ def _ai_gate_base_scores(meta: Dict[str, float],
                          snapshot_pos: int = 1,
                          prev_meta: Optional[Dict[str, float]] = None) -> Tuple[Dict[str, float], str]:
     policy_mode = str(getattr(cfg, "policy_mode", "linear_ucb") or "linear_ucb").strip().lower() if cfg is not None else "linear_ucb"
-    if policy_mode in ("distilled_tree", "distilled_tree_bandit", "tree", "tree_bandit", "dt", "dt_bandit") and cfg is not None:
+    if policy_mode in ("distilled_tree", "distilled_tree_bandit", "distilled_tree_roi", "tree", "tree_bandit", "tree_roi", "dt", "dt_bandit", "dt_roi") and cfg is not None:
         scores, leaf = _ai_gate_distilled_tree_scores(meta, cfg, snapshot_pos=snapshot_pos, prev_meta=prev_meta)
         return scores, leaf
     return _ai_gate_linear_scores(meta), "linear"
 
 
 def _ai_gate_reward(action_name: str,
-                    improved: bool,
-                    true_fix: bool,
+                    bit_errors_before: int,
+                    bit_errors_after: int,
                     hw_cycles_grand: int,
                     cfg: AIGatedHybridConfig) -> float:
+    be_before = max(0, int(bit_errors_before))
+    be_after = max(0, int(bit_errors_after))
     reward = 0.0
-    if bool(improved):
-        reward += float(getattr(cfg, "improvement_reward", 0.35) or 0.35)
-    if bool(true_fix):
+    if be_after < be_before:
+        frac = float(be_before - be_after) / float(max(1, be_before))
+        reward += float(getattr(cfg, "improvement_reward", 0.35) or 0.35) * max(frac, 0.20)
+    if be_after == 0 and be_before > 0:
         reward += float(getattr(cfg, "true_fix_reward", 1.15) or 1.15)
+    if str(action_name) == "skip" and be_before > 0 and be_after >= be_before:
+        reward -= float(getattr(cfg, "skip_failure_penalty", 0.26) or 0.26)
     cost_scale = max(1.0, float(getattr(cfg, "cost_scale_cycles", 240000.0) or 240000.0))
     reward -= float(getattr(cfg, "cost_lambda", 0.30) or 0.30) * min(float(hw_cycles_grand) / cost_scale, 2.0)
     return float(reward)
@@ -7716,7 +7793,7 @@ grand_cfg_awgn_air_fallback_boost.ai_rank_roi_local_conflict_bonus = _get_float_
 
 ai_gate_cfg_awgn_air = AIGatedHybridConfig(
     gate_snapshot_policy=os.environ.get("GRAND_AIR_GATE_SNAPSHOT", "4").strip() or "4",
-    policy_mode=os.environ.get("GRAND_AIR_POLICY_MODE", "distilled_tree_bandit").strip().lower() or "distilled_tree_bandit",
+    policy_mode=os.environ.get("GRAND_AIR_POLICY_MODE", "distilled_tree_roi").strip().lower() or "distilled_tree_roi",
     dynamic_per_snapshot=bool(_get_int_env("GRAND_AIR_DYNAMIC_PER_SNAPSHOT", 1)),
     tiny_snapshot_cap=_get_int_env("GRAND_AIR_TINY_SNAPSHOT_CAP", 2),
     full_snapshot_cap=_get_int_env("GRAND_AIR_FULL_SNAPSHOT_CAP", 3),
@@ -7730,29 +7807,41 @@ ai_gate_cfg_awgn_air = AIGatedHybridConfig(
     cost_scale_cycles=_get_float_env("GRAND_AIR_COST_SCALE_CYCLES", 240000.0),
     improvement_reward=_get_float_env("GRAND_AIR_IMPROVEMENT_REWARD", 0.35),
     true_fix_reward=_get_float_env("GRAND_AIR_TRUE_FIX_REWARD", 1.15),
+    skip_failure_penalty=_get_float_env("GRAND_AIR_SKIP_FAILURE_PENALTY", 0.26),
     tiny_cost_prior=_get_float_env("GRAND_AIR_TINY_COST_PRIOR", 0.06),
     full_cost_prior=_get_float_env("GRAND_AIR_FULL_COST_PRIOR", 0.18),
     meta_cost_prior=_get_float_env("GRAND_AIR_META_COST_PRIOR", 0.28),
     meta_min_compactness=_get_float_env("GRAND_AIR_META_MIN_COMPACTNESS", 0.34),
     meta_min_conflict=_get_float_env("GRAND_AIR_META_MIN_CONFLICT", 0.08),
-    force_skip_diffuse=_get_float_env("GRAND_AIR_FORCE_SKIP_DIFFUSE", 0.82),
-    force_skip_promise=_get_float_env("GRAND_AIR_FORCE_SKIP_PROMISE", -0.08),
-    tree_diffuse_skip=_get_float_env("GRAND_AIR_TREE_DIFFUSE_SKIP", 0.82),
-    tree_skip_union_size=_get_int_env("GRAND_AIR_TREE_SKIP_UNION_SIZE", 208),
-    tree_skip_promise=_get_float_env("GRAND_AIR_TREE_SKIP_PROMISE", -0.065),
-    tree_skip_block_concentration=_get_float_env("GRAND_AIR_TREE_SKIP_BLOCK_CONCENTRATION", 0.08),
+    force_skip_diffuse=_get_float_env("GRAND_AIR_FORCE_SKIP_DIFFUSE", 0.95),
+    force_skip_promise=_get_float_env("GRAND_AIR_FORCE_SKIP_PROMISE", -0.22),
+    warmup_min_trials_per_action=_get_int_env("GRAND_AIR_WARMUP_MIN_TRIALS_PER_ACTION", 8),
+    warmup_snapshot_cap=_get_int_env("GRAND_AIR_WARMUP_SNAPSHOT_CAP", 1),
+    suppress_skip_during_warmup=bool(_get_int_env("GRAND_AIR_SUPPRESS_SKIP_DURING_WARMUP", 1)),
+    cold_start_bonus=_get_float_env("GRAND_AIR_COLD_START_BONUS", 0.55),
+    roi_score_weight=_get_float_env("GRAND_AIR_ROI_SCORE_WEIGHT", 0.75),
+    roi_disable_min_trials=_get_int_env("GRAND_AIR_ROI_DISABLE_MIN_TRIALS", 6),
+    roi_disable_threshold=_get_float_env("GRAND_AIR_ROI_DISABLE_THRESHOLD", -0.03),
+    roi_disable_penalty=_get_float_env("GRAND_AIR_ROI_DISABLE_PENALTY", 0.40),
+    roi_promote_min_trials=_get_int_env("GRAND_AIR_ROI_PROMOTE_MIN_TRIALS", 4),
+    roi_promote_threshold=_get_float_env("GRAND_AIR_ROI_PROMOTE_THRESHOLD", 0.08),
+    roi_promote_weight=_get_float_env("GRAND_AIR_ROI_PROMOTE_WEIGHT", 0.30),
+    tree_diffuse_skip=_get_float_env("GRAND_AIR_TREE_DIFFUSE_SKIP", 0.92),
+    tree_skip_union_size=_get_int_env("GRAND_AIR_TREE_SKIP_UNION_SIZE", 448),
+    tree_skip_promise=_get_float_env("GRAND_AIR_TREE_SKIP_PROMISE", -0.12),
+    tree_skip_block_concentration=_get_float_env("GRAND_AIR_TREE_SKIP_BLOCK_CONCENTRATION", 0.06),
     tree_tiny_compactness=_get_float_env("GRAND_AIR_TREE_TINY_COMPACTNESS", 0.16),
     tree_tiny_uncertainty=_get_float_env("GRAND_AIR_TREE_TINY_UNCERTAINTY", 0.20),
-    tree_tiny_block_concentration=_get_float_env("GRAND_AIR_TREE_TINY_BLOCK_CONCENTRATION", 0.07),
+    tree_tiny_block_concentration=_get_float_env("GRAND_AIR_TREE_TINY_BLOCK_CONCENTRATION", 0.05),
     tree_full_compactness=_get_float_env("GRAND_AIR_TREE_FULL_COMPACTNESS", 0.24),
     tree_full_uncertainty=_get_float_env("GRAND_AIR_TREE_FULL_UNCERTAINTY", 0.20),
     tree_full_promise=_get_float_env("GRAND_AIR_TREE_FULL_PROMISE", -0.05),
-    tree_full_block_concentration=_get_float_env("GRAND_AIR_TREE_FULL_BLOCK_CONCENTRATION", 0.09),
+    tree_full_block_concentration=_get_float_env("GRAND_AIR_TREE_FULL_BLOCK_CONCENTRATION", 0.07),
     tree_full_conflict=_get_float_env("GRAND_AIR_TREE_FULL_CONFLICT", 0.06),
     tree_meta_compactness=_get_float_env("GRAND_AIR_TREE_META_COMPACTNESS", 0.38),
     tree_meta_conflict=_get_float_env("GRAND_AIR_TREE_META_CONFLICT", 0.09),
     tree_meta_promise=_get_float_env("GRAND_AIR_TREE_META_PROMISE", 0.02),
-    tree_meta_block_concentration=_get_float_env("GRAND_AIR_TREE_META_BLOCK_CONCENTRATION", 0.11),
+    tree_meta_block_concentration=_get_float_env("GRAND_AIR_TREE_META_BLOCK_CONCENTRATION", 0.10),
     tree_tiny_rescue_compactness=_get_float_env("GRAND_AIR_TREE_TINY_RESCUE_COMPACTNESS", 0.12),
     tree_tiny_rescue_uncertainty=_get_float_env("GRAND_AIR_TREE_TINY_RESCUE_UNCERTAINTY", 0.22),
     tree_promote_margin=_get_float_env("GRAND_AIR_TREE_PROMOTE_MARGIN", 0.05),
@@ -8596,8 +8685,8 @@ def run_hybrid_ldpc_grand_adaptive(
             if (ai_gate_state is not None) and (ai_gate_cfg is not None) and (x_gate is not None):
                 reward = _ai_gate_reward(
                     action_name=str(ai_gate_action),
-                    improved=(be_after < be1),
-                    true_fix=(be_after == 0),
+                    bit_errors_before=int(be1),
+                    bit_errors_after=int(be_after),
                     hw_cycles_grand=int(hw_c_grand),
                     cfg=ai_gate_cfg,
                 )
@@ -9269,6 +9358,9 @@ def save_awgn_results(
         "ai_gate_enabled", "ai_gate_policy_mode", "ai_gate_skip_rate", "ai_gate_tiny_rate", "ai_gate_full_rate", "ai_gate_meta_rate",
         "ai_gate_first_skip_rate", "ai_gate_decision_count_mean_if_invoked", "ai_gate_escalation_rate_if_invoked",
         "ai_gate_confidence_mean_if_invoked", "ai_gate_promise_mean_if_invoked",
+        "ai_gate_skip_rate_if_failed", "ai_gate_tiny_rate_if_failed", "ai_gate_full_rate_if_failed", "ai_gate_meta_rate_if_failed",
+        "ai_gate_first_skip_rate_if_failed", "ai_gate_decision_count_mean_if_failed", "ai_gate_escalation_rate_if_failed",
+        "ai_gate_confidence_mean_if_failed", "ai_gate_promise_mean_if_failed",
     ] + [f"snapshot_success_at_{it}" for it in diag_iters]
 
     diag_path = os.path.join(output_dir, base_name + "_summary_diagnostics.csv")
@@ -9287,6 +9379,7 @@ def save_awgn_results(
                 row["ber_stage1"] = float(stats.get("ber_ldpc", stats.get("ber", np.nan)))
                 row["fer_stage1"] = float(stats.get("fer_ldpc", stats.get("fer", np.nan)))
 
+                failed = np.asarray(stats.get("per_frame_stage1_failed", []), dtype=np.bool_)
                 invoked = np.asarray(stats.get("per_frame_stage2_invoked", stats.get("per_frame_stage1_failed", [])), dtype=np.bool_)
                 be1 = np.asarray(stats.get("per_frame_bit_errors_stage1", []), dtype=np.int32)
                 syn = np.asarray(stats.get("per_frame_stage1_syndrome_weight", []), dtype=np.int32)
@@ -9359,6 +9452,30 @@ def save_awgn_results(
                         prom_vals = gprom[mask]
                         prom_vals = prom_vals[np.isfinite(prom_vals)]
                         row["ai_gate_promise_mean_if_invoked"] = _safe_mean(prom_vals)
+                if failed.size > 0 and failed.any():
+                    fmask = failed.astype(bool)
+                    def _safe_mean_failed(a):
+                        a = np.asarray(a)
+                        return float(a.mean()) if a.size else np.nan
+                    if gact.size == failed.size:
+                        row["ai_gate_skip_rate_if_failed"] = float(np.mean(np.asarray([str(x) == "skip" for x in gact[fmask]], dtype=np.float64)))
+                        row["ai_gate_tiny_rate_if_failed"] = float(np.mean(np.asarray([str(x) == "tiny" for x in gact[fmask]], dtype=np.float64)))
+                        row["ai_gate_full_rate_if_failed"] = float(np.mean(np.asarray([str(x) == "full" for x in gact[fmask]], dtype=np.float64)))
+                        row["ai_gate_meta_rate_if_failed"] = float(np.mean(np.asarray([str(x) == "meta" for x in gact[fmask]], dtype=np.float64)))
+                    if gfirst.size == failed.size:
+                        row["ai_gate_first_skip_rate_if_failed"] = float(np.mean(np.asarray([str(x) == "skip" for x in gfirst[fmask]], dtype=np.float64)))
+                    if gdec.size == failed.size:
+                        row["ai_gate_decision_count_mean_if_failed"] = _safe_mean_failed(gdec[fmask])
+                    if gesc.size == failed.size:
+                        row["ai_gate_escalation_rate_if_failed"] = _safe_mean_failed(gesc[fmask])
+                    if gconf.size == failed.size:
+                        conf_vals = gconf[fmask]
+                        conf_vals = conf_vals[np.isfinite(conf_vals)]
+                        row["ai_gate_confidence_mean_if_failed"] = _safe_mean_failed(conf_vals)
+                    if gprom.size == failed.size:
+                        prom_vals = gprom[fmask]
+                        prom_vals = prom_vals[np.isfinite(prom_vals)]
+                        row["ai_gate_promise_mean_if_failed"] = _safe_mean_failed(prom_vals)
                     if diag_iters:
                         for it in diag_iters:
                             row[f"snapshot_success_at_{it}"] = float(np.mean((ssucc[mask] == int(it)).astype(np.float64)))
@@ -10136,8 +10253,10 @@ def run_awgn_sweep_for_code(
                     dec_name = f"hybairdtbroi{int(it)}" if selection_mode in ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi") else f"hybairdtb{int(it)}"
                 elif policy_mode in ("distilled_tree", "tree", "dt"):
                     dec_name = f"hybairdtroi{int(it)}" if selection_mode in ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi") else f"hybairdt{int(it)}"
+                elif policy_mode in ("distilled_tree_roi", "tree_roi", "dt_roi"):
+                    dec_name = f"hybairroi{int(it)}" if selection_mode in ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi") else f"hybairroi{int(it)}"
                 else:
-                    dec_name = f"hybairroi{int(it)}" if selection_mode in ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi") else f"hybair{int(it)}"
+                    dec_name = f"hybair{int(it)}"
                 snapshot_schedule = _resolve_grand_snapshot_schedule(int(it))
                 seed = _decoder_seed(90_000, int(it))
                 dec_cfg = DecoderConfig(max_iters=int(it), alpha=float(alpha), early_stop=True)
