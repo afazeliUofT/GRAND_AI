@@ -7,7 +7,7 @@ Usage:
 
 It auto-detects the newest result directory when no path is given.
 It compares ldpc15 against the strongest available hybrid in this order:
-  hybairdtb15, hybairdt15, hybair15, hybmeta15, hybahr15, hybosd15, hybbgr15, hyb15
+  hybairpwin15, hybairprobe15, hybairroi15, hybairdtbroi15, hybairdt15, hybair15, hybmeta15, hybahr15, hybosd15, hybbgr15, hyb15
 """
 
 from __future__ import annotations
@@ -16,11 +16,12 @@ import csv
 import glob
 import math
 import os
+import re
 import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
 DecoderRow = Dict[str, str]
-HYBRID_PRIORITY = ["hybairprobe15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
+HYBRID_PRIORITY = ["hybairpwin15", "hybairprobe15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
 
 
 def _to_float(value: object) -> float:
@@ -88,6 +89,25 @@ def _extract_verify_triplets(path: str) -> List[str]:
     except Exception:
         return vals
     return vals
+
+
+def _extract_expected_triplet_from_sbatch(path: str) -> Tuple[str, str, str]:
+    dec = pol = sel = ""
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            text = f.read()
+    except Exception:
+        return dec, pol, sel
+    m = re.search(r'EXPECTED_HYBRID_DECODER=([^\s]+)', text)
+    if m:
+        dec = m.group(1).strip()
+    m = re.search(r'EXPECTED_HYBRID_POLICY=([^\s]+)', text)
+    if m:
+        pol = m.group(1).strip()
+    m = re.search(r'EXPECTED_HYBRID_SELECTION=([^\s]+)', text)
+    if m:
+        sel = m.group(1).strip()
+    return dec, pol, sel
 
 
 def _load_result_set(base_dir: str) -> Tuple[str, List[DecoderRow], List[DecoderRow], List[DecoderRow]]:
@@ -174,6 +194,8 @@ def main() -> int:
         print("INFO: active result is the forced-explore ROI controller run.")
     if hybrid_name == "hybairprobe15":
         print("INFO: active result is the probe-and-escalate ROI run.")
+    if hybrid_name == "hybairpwin15":
+        print("INFO: active result is the windowed probe-and-escalate ROI run.")
 
     log_path = _latest_log_file(repo_root)
     if log_path is not None:
@@ -185,6 +207,17 @@ def main() -> int:
             print(f"Latest verify line : {verify_lines[-1]}")
         if labels and hybrid_name not in labels:
             print("WARNING: summary/log decoder mismatch. Results may be stale or renamed.")
+
+    sbatch_path = os.path.join(repo_root, 'run_best_hybrid.sbatch')
+    if os.path.isfile(sbatch_path):
+        exp_dec, exp_pol, exp_sel = _extract_expected_triplet_from_sbatch(sbatch_path)
+        if exp_dec or exp_pol or exp_sel:
+            print(f"Current sbatch expects : decoder={exp_dec or 'n/a'} policy={exp_pol or 'n/a'} selection={exp_sel or 'n/a'}")
+        if log_path is not None and verify_lines and (exp_dec or exp_pol or exp_sel):
+            latest_verify = verify_lines[-1]
+            mismatch = (exp_dec and (f'decoder={exp_dec}' not in latest_verify)) or (exp_pol and (f'policy={exp_pol}' not in latest_verify)) or (exp_sel and (f'selection={exp_sel}' not in latest_verify))
+            if mismatch:
+                print('WARNING: current code modules do not match the latest pushed run/log. Results are stale relative to the code.')
 
 
     _print_header("Hybrid vs legacy LDPC")

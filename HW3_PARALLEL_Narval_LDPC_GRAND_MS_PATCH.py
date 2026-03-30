@@ -1755,6 +1755,16 @@ class ClusterGrandConfig:
     ai_rank_roi_diffuse_l_scale: float = 0.70
     ai_rank_roi_local_conflict_bonus: float = 0.30
 
+    # Windowed AI ranker (block-local mixture-of-experts style)
+    ai_window_block_size: int = 64
+    ai_window_top_blocks: int = 2
+    ai_window_neighbor_blocks: int = 0
+    ai_window_local_seed_per_block: int = 4
+    ai_window_diffuse_extra_blocks: int = 1
+    ai_window_compact_single_threshold: float = 0.18
+    ai_window_block_score_conflict_bonus: float = 0.35
+    ai_window_block_score_density_bonus: float = 0.20
+
     # Receiver 7 / basis-GRAND + block-debias anchored restart
     basis_candidate_ratio: float = 3.0     # L_basis ~= ratio * L_search
     basis_max_bits: Optional[int] = None   # hard cap on basis candidate size
@@ -2884,6 +2894,210 @@ def _select_search_vars_ai_rank_roi(union_vars: np.ndarray,
     }
 
 
+def _select_search_vars_ai_window_roi(union_vars: np.ndarray,
+                                      unsat_checks: np.ndarray,
+                                      code_cfg: CodeConfig,
+                                      llr_for_sort: np.ndarray,
+                                      L: int,
+                                      cfg: ClusterGrandConfig,
+                                      llr_snapshot: Optional[np.ndarray] = None,
+                                      llr_channel: Optional[np.ndarray] = None) -> Tuple[np.ndarray, Dict[str, int]]:
+    """Window-aware lightweight AI ranker.
+
+    It first scores variables using the same cheap cues as ``ai_rank_roi``.
+    Then it chooses a tiny number of high-value windows (blocks) and restricts
+    GRAND to those windows only. This is intended for the diffuse residuals seen
+    in the current data, where the global union is wide but the true rescue ROI
+    may still be concentrated in a few sub-blocks.
+    """
+    union_vars = np.asarray(union_vars, dtype=np.int32)
+    unsat_checks = np.asarray(unsat_checks, dtype=np.int32)
+    L = int(max(L, 0))
+
+    if L <= 0 or union_vars.size == 0:
+        return np.array([], dtype=np.int32), {
+            "selection_mode_used": "ai_window_roi",
+            "sv_seeded_count": 0,
+            "sv_neighbor_visits": 0,
+            "sv_score_len": int(union_vars.size),
+            "ai_window_profile": "empty",
+            "ai_window_blocks_used": 0,
+            "ai_window_budget": 0,
+        }
+
+    abs_llr_union = np.abs(llr_for_sort[union_vars]).astype(np.float64, copy=False)
+    eps = float(getattr(cfg, "sv_epsilon", 1e-3) or 1e-3)
+    vote_counts = np.zeros(union_vars.size, dtype=np.int32)
+    var_to_local = {int(v): i for i, v in enumerate(union_vars.tolist())}
+    sv_neighbor_visits = 0
+
+    for j in unsat_checks:
+        for v in code_cfg.checks_to_vars[int(j)]:
+            loc = var_to_local.get(int(v), None)
+            if loc is None:
+                continue
+            vote_counts[loc] += 1
+            sv_neighbor_visits += 1
+
+    max_vote = max(1, int(vote_counts.max()) if vote_counts.size else 0)
+    inv_llr = 1.0 / (abs_llr_union + eps)
+    max_inv_llr = float(inv_llr.max()) if inv_llr.size else 1.0
+    if max_inv_llr <= 0.0:
+        max_inv_llr = 1.0
+
+    vote_norm = vote_counts.astype(np.float64) / float(max_vote)
+    inv_llr_norm = inv_llr / float(max_inv_llr)
+    degs = np.asarray([max(1, len(code_cfg.vars_to_checks[int(v)])) for v in union_vars.tolist()], dtype=np.float64)
+    density = np.clip(vote_counts.astype(np.float64) / degs, 0.0, 1.0)
+
+    disagree = np.zeros(union_vars.size, dtype=np.float64)
+    weak_disagree = np.zeros(union_vars.size, dtype=np.float64)
+    weak_thr = float(getattr(cfg, "ai_rank_roi_weak_llr_abs_cap", 2.5) or 2.5)
+    if abs_llr_union.size > 0:
+        try:
+            qthr = float(np.quantile(abs_llr_union, float(getattr(cfg, "ai_rank_roi_weak_llr_quantile", 0.30) or 0.30)))
+        except Exception:
+            qthr = float(np.median(abs_llr_union)) if abs_llr_union.size else weak_thr
+        weak_thr = min(weak_thr, max(0.5, qthr))
+    weak_mask = (abs_llr_union <= weak_thr)
+
+    if llr_snapshot is not None and llr_channel is not None:
+        llr_snapshot = np.asarray(llr_snapshot, dtype=np.float32)
+        llr_channel = np.asarray(llr_channel, dtype=np.float32)
+        snap_sign = np.sign(llr_snapshot[union_vars]).astype(np.int8, copy=False)
+        chan_sign = np.sign(llr_channel[union_vars]).astype(np.int8, copy=False)
+        disagree = ((snap_sign * chan_sign) < 0).astype(np.float64, copy=False)
+        weak_disagree = ((disagree > 0.0) & weak_mask).astype(np.float64, copy=False)
+
+    block_size = max(1, int(getattr(cfg, "ai_window_block_size", getattr(cfg, "ai_rank_roi_block_size", 64)) or 64))
+    block_ids = (union_vars.astype(np.int64) // block_size).astype(np.int64, copy=False)
+    block_conc = _ai_rank_roi_block_concentration(union_vars, block_size)
+
+    ai_score = (
+        float(getattr(cfg, "ai_rank_vote_weight", 1.0) or 1.0) * vote_norm
+        + float(getattr(cfg, "ai_rank_llr_weight", 0.85) or 0.85) * inv_llr_norm
+        + float(getattr(cfg, "ai_rank_disagreement_weight", 0.55) or 0.55) * disagree * inv_llr_norm
+        + float(getattr(cfg, "ai_rank_density_weight", 0.35) or 0.35) * density
+        + float(getattr(cfg, "ai_rank_roi_local_conflict_bonus", 0.30) or 0.30) * block_conc * weak_disagree * inv_llr_norm
+    )
+
+    unique_blocks = np.unique(block_ids)
+    block_score_map: Dict[int, float] = {}
+    block_conf_map: Dict[int, float] = {}
+    block_density_map: Dict[int, float] = {}
+    for b in unique_blocks.tolist():
+        mask = (block_ids == int(b))
+        locs = np.flatnonzero(mask)
+        if locs.size == 0:
+            continue
+        loc_scores = ai_score[locs]
+        loc_conf = float(np.mean(weak_disagree[locs])) if locs.size else 0.0
+        loc_den = float(np.mean(density[locs])) if locs.size else 0.0
+        top_take = min(8, int(locs.size))
+        top_sum = float(np.sort(loc_scores)[-top_take:].sum()) if top_take > 0 else 0.0
+        score = top_sum + float(getattr(cfg, "ai_window_block_score_conflict_bonus", 0.35) or 0.35) * loc_conf + float(getattr(cfg, "ai_window_block_score_density_bonus", 0.20) or 0.20) * loc_den
+        block_score_map[int(b)] = float(score)
+        block_conf_map[int(b)] = float(loc_conf)
+        block_density_map[int(b)] = float(loc_den)
+
+    union_size = int(union_vars.size)
+    diffuse = (
+        float(union_size >= int(getattr(cfg, "ai_rank_roi_diffuse_union_size", 208) or 208))
+        and block_conc <= float(getattr(cfg, "ai_rank_roi_diffuse_block_concentration", 0.08) or 0.08)
+    )
+    compact = block_conc >= float(getattr(cfg, "ai_window_compact_single_threshold", 0.18) or 0.18)
+
+    top_blocks = max(1, int(getattr(cfg, "ai_window_top_blocks", 2) or 2))
+    profile = "pair"
+    if compact:
+        top_blocks = 1
+        profile = "single_compact"
+    elif diffuse:
+        top_blocks = min(max(2, top_blocks + int(getattr(cfg, "ai_window_diffuse_extra_blocks", 1) or 1)), 4)
+        profile = "diffuse_multi"
+    else:
+        profile = "pair_balanced" if top_blocks > 1 else "single"
+
+    block_order = sorted(unique_blocks.tolist(), key=lambda b: (-float(block_score_map.get(int(b), 0.0)), -float(block_conf_map.get(int(b), 0.0)), int(b)))
+    chosen_blocks: List[int] = []
+    seen_blocks = set()
+    for b in block_order:
+        if len(chosen_blocks) >= top_blocks:
+            break
+        b_int = int(b)
+        if b_int not in seen_blocks:
+            chosen_blocks.append(b_int)
+            seen_blocks.add(b_int)
+
+    nb = max(0, int(getattr(cfg, "ai_window_neighbor_blocks", 0) or 0))
+    if nb > 0:
+        for b in list(chosen_blocks):
+            for delta in range(1, nb + 1):
+                for nbid in (b - delta, b + delta):
+                    if nbid in block_score_map and nbid not in seen_blocks:
+                        chosen_blocks.append(int(nbid))
+                        seen_blocks.add(int(nbid))
+
+    chosen_mask = np.isin(block_ids, np.asarray(chosen_blocks, dtype=np.int64))
+    chosen_locs = np.flatnonzero(chosen_mask)
+    if chosen_locs.size == 0:
+        chosen_locs = np.arange(union_vars.size, dtype=np.int32)
+        profile = "fallback_all"
+
+    target_budget = min(int(L), int(chosen_locs.size))
+    min_target = max(8, min(int(L), int(max(1, len(chosen_blocks)) * 8)))
+    if target_budget < min_target and len(chosen_blocks) < len(block_order):
+        for b in block_order[len(chosen_blocks):]:
+            add_mask = (block_ids == int(b))
+            add_locs = np.flatnonzero(add_mask)
+            if add_locs.size == 0:
+                continue
+            chosen_locs = np.unique(np.concatenate([chosen_locs.astype(np.int32, copy=False), add_locs.astype(np.int32, copy=False)])).astype(np.int32, copy=False)
+            chosen_blocks.append(int(b))
+            target_budget = min(int(L), int(chosen_locs.size))
+            if target_budget >= min_target:
+                break
+
+    seed_per_block = max(0, int(getattr(cfg, "ai_window_local_seed_per_block", 4) or 4))
+    seeds: List[int] = []
+    seed_seen = set()
+    for b in chosen_blocks:
+        locs = [int(loc) for loc in chosen_locs.tolist() if int(block_ids[int(loc)]) == int(b)]
+        locs_sorted = sorted(locs, key=lambda loc: (-float(weak_disagree[loc]), -float(ai_score[loc]), float(abs_llr_union[loc]), int(union_vars[loc])))
+        for loc in locs_sorted[: min(seed_per_block, len(locs_sorted))]:
+            v_int = int(union_vars[loc])
+            if v_int not in seed_seen:
+                seeds.append(v_int)
+                seed_seen.add(v_int)
+
+    chosen_order = sorted(chosen_locs.tolist(), key=lambda loc: (-float(weak_disagree[int(loc)]), -float(ai_score[int(loc)]), float(abs_llr_union[int(loc)]), -int(vote_counts[int(loc)]), int(union_vars[int(loc)])))
+    selected: List[int] = []
+    seen = set()
+    for v_int in seeds:
+        if len(selected) >= target_budget:
+            break
+        if v_int not in seen:
+            selected.append(int(v_int))
+            seen.add(int(v_int))
+    for loc in chosen_order:
+        if len(selected) >= target_budget:
+            break
+        v_int = int(union_vars[int(loc)])
+        if v_int not in seen:
+            selected.append(v_int)
+            seen.add(v_int)
+
+    return np.asarray(selected[:target_budget], dtype=np.int32), {
+        "selection_mode_used": "ai_window_roi",
+        "sv_seeded_count": int(min(len(seeds), target_budget)),
+        "sv_neighbor_visits": int(sv_neighbor_visits),
+        "sv_score_len": int(union_vars.size),
+        "ai_window_profile": str(profile),
+        "ai_window_blocks_used": int(len(chosen_blocks)),
+        "ai_window_budget": int(target_budget),
+    }
+
+
 def _resolve_sort_llr_vector(llr_snapshot: np.ndarray,
                              llr_channel: Optional[np.ndarray],
                              cfg: ClusterGrandConfig) -> Tuple[np.ndarray, str]:
@@ -2975,7 +3189,18 @@ def _select_presolver_vars(union_vars: np.ndarray,
         }
 
     selection_mode = str(getattr(cfg, "selection_mode", "llr") or "llr").strip().lower()
-    if selection_mode in ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi"):
+    if selection_mode in ("ai_window_roi", "aiwindow", "window_roi", "receiver9_window"):
+        base_vars, meta = _select_search_vars_ai_window_roi(
+            union_vars=union_vars,
+            unsat_checks=unsat_checks,
+            code_cfg=code_cfg,
+            llr_for_sort=llr_for_sort,
+            L=L_peel,
+            cfg=cfg,
+            llr_snapshot=llr_snapshot,
+            llr_channel=llr_channel,
+        )
+    elif selection_mode in ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi"):
         base_vars, meta = _select_search_vars_ai_rank_roi(
             union_vars=union_vars,
             unsat_checks=unsat_checks,
@@ -5955,7 +6180,18 @@ def run_local_grand_on_union_of_clusters(frame: FrameLog,
     L = _auto_pick_grand_search_size(L_full, cfg)
     selection_mode = str(getattr(cfg, "selection_mode", "llr") or "llr").strip().lower()
 
-    if selection_mode in ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi"):
+    if selection_mode in ("ai_window_roi", "aiwindow", "window_roi", "receiver9_window"):
+        search_vars, front_end_meta = _select_search_vars_ai_window_roi(
+            union_vars=union_vars,
+            unsat_checks=unsat_checks,
+            code_cfg=code_cfg,
+            llr_for_sort=llr_for_sort,
+            L=L,
+            cfg=cfg,
+            llr_snapshot=llr_snapshot,
+            llr_channel=getattr(frame, "llr_channel", None),
+        )
+    elif selection_mode in ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi"):
         search_vars, front_end_meta = _select_search_vars_ai_rank_roi(
             union_vars=union_vars,
             unsat_checks=unsat_checks,
@@ -7082,9 +7318,9 @@ def grand_hw_cycles_from_result(
     # neighbour scan itself is already covered by cluster_unsat_edges above.
     if selection_mode_used in ("syndrome_vote", "sv", "receiver2"):
         cycles += _ceil_div(sv_score_len, add_pc)
-    elif selection_mode_used in ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi", "ai_rank", "ai", "airank", "receiver9"):
-        # Weighted blend of vote, inverse-|LLR|, disagreement, and local density.
-        cycles += _ceil_div(3 * sv_score_len, add_pc)
+    elif selection_mode_used in ("ai_window_roi", "aiwindow", "window_roi", "receiver9_window", "ai_rank_roi", "airoi", "roi_rank", "receiver9_roi", "ai_rank", "ai", "airank", "receiver9"):
+        # Weighted blend of vote, inverse-|LLR|, disagreement, density, plus lightweight block scoring.
+        cycles += _ceil_div(4 * sv_score_len, add_pc)
 
     # (4) Receiver-3-style pre-solver cost (if enabled)
     peel_candidate_size = int(getattr(result, "peel_candidate_size", 0))
@@ -7825,6 +8061,14 @@ grand_cfg_awgn_air_tiny.ai_rank_roi_diffuse_block_concentration = _get_float_env
 grand_cfg_awgn_air_tiny.ai_rank_roi_compact_block_concentration = _get_float_env("GRAND_AIR_AI_ROI_COMPACT_BLOCK", 0.11)
 grand_cfg_awgn_air_tiny.ai_rank_roi_diffuse_l_scale = _get_float_env("GRAND_AIR_AI_ROI_DIFFUSE_L_SCALE", 0.70)
 grand_cfg_awgn_air_tiny.ai_rank_roi_local_conflict_bonus = _get_float_env("GRAND_AIR_AI_ROI_CONFLICT_BONUS", 0.30)
+grand_cfg_awgn_air_tiny.ai_window_block_size = _get_int_env("GRAND_AIR_AI_WINDOW_BLOCK_SIZE", 64)
+grand_cfg_awgn_air_tiny.ai_window_top_blocks = _get_int_env("GRAND_AIR_AI_WINDOW_TINY_TOP_BLOCKS", 1)
+grand_cfg_awgn_air_tiny.ai_window_neighbor_blocks = _get_int_env("GRAND_AIR_AI_WINDOW_NEIGHBOR_BLOCKS", 0)
+grand_cfg_awgn_air_tiny.ai_window_local_seed_per_block = _get_int_env("GRAND_AIR_AI_WINDOW_LOCAL_SEEDS", 4)
+grand_cfg_awgn_air_tiny.ai_window_diffuse_extra_blocks = _get_int_env("GRAND_AIR_AI_WINDOW_DIFFUSE_EXTRA_BLOCKS", 1)
+grand_cfg_awgn_air_tiny.ai_window_compact_single_threshold = _get_float_env("GRAND_AIR_AI_WINDOW_COMPACT_SINGLE", 0.18)
+grand_cfg_awgn_air_tiny.ai_window_block_score_conflict_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_CONFLICT_BONUS", 0.35)
+grand_cfg_awgn_air_tiny.ai_window_block_score_density_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_DENSITY_BONUS", 0.20)
 
 grand_cfg_awgn_air_full = copy.deepcopy(grand_cfg_awgn_meta)
 grand_cfg_awgn_air_full.selection_mode = os.environ.get("GRAND_AIR_SELECTION_MODE", "ai_rank").strip().lower() or "ai_rank"
@@ -7849,6 +8093,14 @@ grand_cfg_awgn_air_full.ai_rank_roi_diffuse_block_concentration = _get_float_env
 grand_cfg_awgn_air_full.ai_rank_roi_compact_block_concentration = _get_float_env("GRAND_AIR_AI_ROI_COMPACT_BLOCK", 0.11)
 grand_cfg_awgn_air_full.ai_rank_roi_diffuse_l_scale = _get_float_env("GRAND_AIR_AI_ROI_DIFFUSE_L_SCALE", 0.70)
 grand_cfg_awgn_air_full.ai_rank_roi_local_conflict_bonus = _get_float_env("GRAND_AIR_AI_ROI_CONFLICT_BONUS", 0.30)
+grand_cfg_awgn_air_full.ai_window_block_size = _get_int_env("GRAND_AIR_AI_WINDOW_BLOCK_SIZE", 64)
+grand_cfg_awgn_air_full.ai_window_top_blocks = _get_int_env("GRAND_AIR_AI_WINDOW_FULL_TOP_BLOCKS", 2)
+grand_cfg_awgn_air_full.ai_window_neighbor_blocks = _get_int_env("GRAND_AIR_AI_WINDOW_NEIGHBOR_BLOCKS", 0)
+grand_cfg_awgn_air_full.ai_window_local_seed_per_block = _get_int_env("GRAND_AIR_AI_WINDOW_LOCAL_SEEDS", 4)
+grand_cfg_awgn_air_full.ai_window_diffuse_extra_blocks = _get_int_env("GRAND_AIR_AI_WINDOW_DIFFUSE_EXTRA_BLOCKS", 1)
+grand_cfg_awgn_air_full.ai_window_compact_single_threshold = _get_float_env("GRAND_AIR_AI_WINDOW_COMPACT_SINGLE", 0.18)
+grand_cfg_awgn_air_full.ai_window_block_score_conflict_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_CONFLICT_BONUS", 0.35)
+grand_cfg_awgn_air_full.ai_window_block_score_density_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_DENSITY_BONUS", 0.20)
 
 grand_cfg_awgn_air_full_boost = copy.deepcopy(grand_cfg_awgn_meta_boost)
 grand_cfg_awgn_air_full_boost.selection_mode = os.environ.get("GRAND_AIR_SELECTION_MODE", "ai_rank").strip().lower() or "ai_rank"
@@ -7866,6 +8118,14 @@ grand_cfg_awgn_air_full_boost.ai_rank_roi_diffuse_block_concentration = _get_flo
 grand_cfg_awgn_air_full_boost.ai_rank_roi_compact_block_concentration = _get_float_env("GRAND_AIR_AI_ROI_COMPACT_BLOCK", 0.11)
 grand_cfg_awgn_air_full_boost.ai_rank_roi_diffuse_l_scale = _get_float_env("GRAND_AIR_AI_ROI_DIFFUSE_L_SCALE", 0.70)
 grand_cfg_awgn_air_full_boost.ai_rank_roi_local_conflict_bonus = _get_float_env("GRAND_AIR_AI_ROI_CONFLICT_BONUS", 0.30)
+grand_cfg_awgn_air_full_boost.ai_window_block_size = _get_int_env("GRAND_AIR_AI_WINDOW_BLOCK_SIZE", 64)
+grand_cfg_awgn_air_full_boost.ai_window_top_blocks = _get_int_env("GRAND_AIR_AI_WINDOW_FULL_TOP_BLOCKS", 2)
+grand_cfg_awgn_air_full_boost.ai_window_neighbor_blocks = _get_int_env("GRAND_AIR_AI_WINDOW_NEIGHBOR_BLOCKS", 0)
+grand_cfg_awgn_air_full_boost.ai_window_local_seed_per_block = _get_int_env("GRAND_AIR_AI_WINDOW_LOCAL_SEEDS", 4)
+grand_cfg_awgn_air_full_boost.ai_window_diffuse_extra_blocks = _get_int_env("GRAND_AIR_AI_WINDOW_DIFFUSE_EXTRA_BLOCKS", 1)
+grand_cfg_awgn_air_full_boost.ai_window_compact_single_threshold = _get_float_env("GRAND_AIR_AI_WINDOW_COMPACT_SINGLE", 0.18)
+grand_cfg_awgn_air_full_boost.ai_window_block_score_conflict_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_CONFLICT_BONUS", 0.35)
+grand_cfg_awgn_air_full_boost.ai_window_block_score_density_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_DENSITY_BONUS", 0.20)
 
 grand_cfg_awgn_air_fallback = copy.deepcopy(grand_cfg_awgn_bgr)
 grand_cfg_awgn_air_fallback.selection_mode = os.environ.get("GRAND_AIR_SELECTION_MODE", "ai_rank").strip().lower() or "ai_rank"
@@ -7883,6 +8143,14 @@ grand_cfg_awgn_air_fallback.ai_rank_roi_diffuse_block_concentration = _get_float
 grand_cfg_awgn_air_fallback.ai_rank_roi_compact_block_concentration = _get_float_env("GRAND_AIR_AI_ROI_COMPACT_BLOCK", 0.11)
 grand_cfg_awgn_air_fallback.ai_rank_roi_diffuse_l_scale = _get_float_env("GRAND_AIR_AI_ROI_DIFFUSE_L_SCALE", 0.70)
 grand_cfg_awgn_air_fallback.ai_rank_roi_local_conflict_bonus = _get_float_env("GRAND_AIR_AI_ROI_CONFLICT_BONUS", 0.30)
+grand_cfg_awgn_air_fallback.ai_window_block_size = _get_int_env("GRAND_AIR_AI_WINDOW_BLOCK_SIZE", 64)
+grand_cfg_awgn_air_fallback.ai_window_top_blocks = _get_int_env("GRAND_AIR_AI_WINDOW_META_TOP_BLOCKS", 3)
+grand_cfg_awgn_air_fallback.ai_window_neighbor_blocks = _get_int_env("GRAND_AIR_AI_WINDOW_NEIGHBOR_BLOCKS", 0)
+grand_cfg_awgn_air_fallback.ai_window_local_seed_per_block = _get_int_env("GRAND_AIR_AI_WINDOW_LOCAL_SEEDS", 4)
+grand_cfg_awgn_air_fallback.ai_window_diffuse_extra_blocks = _get_int_env("GRAND_AIR_AI_WINDOW_DIFFUSE_EXTRA_BLOCKS", 1)
+grand_cfg_awgn_air_fallback.ai_window_compact_single_threshold = _get_float_env("GRAND_AIR_AI_WINDOW_COMPACT_SINGLE", 0.18)
+grand_cfg_awgn_air_fallback.ai_window_block_score_conflict_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_CONFLICT_BONUS", 0.35)
+grand_cfg_awgn_air_fallback.ai_window_block_score_density_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_DENSITY_BONUS", 0.20)
 
 grand_cfg_awgn_air_fallback_boost = copy.deepcopy(grand_cfg_awgn_bgr_boost)
 grand_cfg_awgn_air_fallback_boost.selection_mode = os.environ.get("GRAND_AIR_SELECTION_MODE", "ai_rank").strip().lower() or "ai_rank"
@@ -7900,6 +8168,14 @@ grand_cfg_awgn_air_fallback_boost.ai_rank_roi_diffuse_block_concentration = _get
 grand_cfg_awgn_air_fallback_boost.ai_rank_roi_compact_block_concentration = _get_float_env("GRAND_AIR_AI_ROI_COMPACT_BLOCK", 0.11)
 grand_cfg_awgn_air_fallback_boost.ai_rank_roi_diffuse_l_scale = _get_float_env("GRAND_AIR_AI_ROI_DIFFUSE_L_SCALE", 0.70)
 grand_cfg_awgn_air_fallback_boost.ai_rank_roi_local_conflict_bonus = _get_float_env("GRAND_AIR_AI_ROI_CONFLICT_BONUS", 0.30)
+grand_cfg_awgn_air_fallback_boost.ai_window_block_size = _get_int_env("GRAND_AIR_AI_WINDOW_BLOCK_SIZE", 64)
+grand_cfg_awgn_air_fallback_boost.ai_window_top_blocks = _get_int_env("GRAND_AIR_AI_WINDOW_META_TOP_BLOCKS", 3)
+grand_cfg_awgn_air_fallback_boost.ai_window_neighbor_blocks = _get_int_env("GRAND_AIR_AI_WINDOW_NEIGHBOR_BLOCKS", 0)
+grand_cfg_awgn_air_fallback_boost.ai_window_local_seed_per_block = _get_int_env("GRAND_AIR_AI_WINDOW_LOCAL_SEEDS", 4)
+grand_cfg_awgn_air_fallback_boost.ai_window_diffuse_extra_blocks = _get_int_env("GRAND_AIR_AI_WINDOW_DIFFUSE_EXTRA_BLOCKS", 1)
+grand_cfg_awgn_air_fallback_boost.ai_window_compact_single_threshold = _get_float_env("GRAND_AIR_AI_WINDOW_COMPACT_SINGLE", 0.18)
+grand_cfg_awgn_air_fallback_boost.ai_window_block_score_conflict_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_CONFLICT_BONUS", 0.35)
+grand_cfg_awgn_air_fallback_boost.ai_window_block_score_density_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_DENSITY_BONUS", 0.20)
 
 ai_gate_cfg_awgn_air = AIGatedHybridConfig(
     gate_snapshot_policy=os.environ.get("GRAND_AIR_GATE_SNAPSHOT", "4").strip() or "4",
@@ -10515,14 +10791,32 @@ def run_awgn_sweep_for_code(
             for it in stage1_list:
                 policy_mode = str(getattr(ai_gate_cfg_awgn_air, "policy_mode", "linear_ucb") or "linear_ucb").strip().lower()
                 selection_mode = str(getattr(grand_cfg_awgn_air_full, "selection_mode", "llr") or "llr").strip().lower()
+                roi_modes = ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi")
+                window_modes = ("ai_window_roi", "aiwindow", "window_roi", "receiver9_window")
                 if policy_mode in ("distilled_tree_bandit", "tree_bandit", "dt_bandit"):
-                    dec_name = f"hybairdtbroi{int(it)}" if selection_mode in ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi") else f"hybairdtb{int(it)}"
+                    if selection_mode in window_modes:
+                        dec_name = f"hybairdtbwin{int(it)}"
+                    elif selection_mode in roi_modes:
+                        dec_name = f"hybairdtbroi{int(it)}"
+                    else:
+                        dec_name = f"hybairdtb{int(it)}"
                 elif policy_mode in ("distilled_tree", "tree", "dt"):
-                    dec_name = f"hybairdtroi{int(it)}" if selection_mode in ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi") else f"hybairdt{int(it)}"
+                    if selection_mode in window_modes:
+                        dec_name = f"hybairdtwin{int(it)}"
+                    elif selection_mode in roi_modes:
+                        dec_name = f"hybairdtroi{int(it)}"
+                    else:
+                        dec_name = f"hybairdt{int(it)}"
                 elif policy_mode in ("distilled_tree_roi", "tree_roi", "dt_roi"):
-                    dec_name = f"hybairroi{int(it)}" if selection_mode in ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi") else f"hybairroi{int(it)}"
+                    if selection_mode in window_modes:
+                        dec_name = f"hybairwroi{int(it)}"
+                    else:
+                        dec_name = f"hybairroi{int(it)}"
                 elif policy_mode in ("probe_moe_roi", "probe_moe", "probe"):
-                    dec_name = f"hybairprobe{int(it)}" if selection_mode in ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi") else f"hybairprobe{int(it)}"
+                    if selection_mode in window_modes:
+                        dec_name = f"hybairpwin{int(it)}"
+                    else:
+                        dec_name = f"hybairprobe{int(it)}"
                 else:
                     dec_name = f"hybair{int(it)}"
                 snapshot_schedule = _resolve_grand_snapshot_schedule(int(it))
