@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Concise analysis for the latest run_best_hybrid result set.
+"""Concise analysis for the latest hybrid result set.
 
 Usage:
   python analysis_tools/analyze_best_hybrid_results.py
-  python analysis_tools/analyze_best_hybrid_results.py results/run_best_hybrid_<jobid>
+  python analysis_tools/analyze_best_hybrid_results.py results/run_<jobname>_<jobid>
 
 It auto-detects the newest result directory when no path is given.
-It compares ldpc15 against the strongest available hybrid in this order:
-  hybairpwin15, hybairprobe15, hybairroi15, hybairdtbroi15, hybairdt15, hybair15, hybmeta15, hybahr15, hybosd15, hybbgr15, hyb15
+It compares ldpc15 against the strongest available hybrid in this order.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
 DecoderRow = Dict[str, str]
-HYBRID_PRIORITY = ["hybairpfix15", "hybairpwin15", "hybairprobe15", "hybairprobefix15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
+HYBRID_PRIORITY = ["hybairpmix15", "hybairpfix15", "hybairpwin15", "hybairprobe15", "hybairprobefix15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
 
 
 def _to_float(value: object) -> float:
@@ -42,10 +41,16 @@ def _read_csv(path: str) -> List[DecoderRow]:
 
 
 def _latest_result_dir(repo_root: str) -> str:
-    pattern = os.path.join(repo_root, "results", "run_best_hybrid_*")
-    candidates = [p for p in glob.glob(pattern) if os.path.isdir(p)]
+    patterns = [
+        os.path.join(repo_root, "results", "run_*_*"),
+        os.path.join(repo_root, "results", "run_*"),
+    ]
+    candidates = []
+    for pattern in patterns:
+        candidates.extend([p for p in glob.glob(pattern) if os.path.isdir(p)])
+    candidates = sorted(set(candidates))
     if not candidates:
-        raise FileNotFoundError(f"No result directories found under {pattern}")
+        raise FileNotFoundError(f"No result directories found under {os.path.join(repo_root, 'results')}")
     candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     return candidates[0]
 
@@ -58,7 +63,7 @@ def _find_one(pattern: str) -> str:
 
 
 def _latest_log_file(repo_root: str) -> Optional[str]:
-    matches = glob.glob(os.path.join(repo_root, 'run_best_hybrid-*.out'))
+    matches = glob.glob(os.path.join(repo_root, 'run_*.out'))
     if not matches:
         return None
     matches.sort(key=lambda p: os.path.getmtime(p), reverse=True)
@@ -159,7 +164,7 @@ def _safe_mean(xs: List[float]) -> float:
 def main() -> int:
     repo_root = os.getcwd()
     if len(sys.argv) > 2:
-        print("Usage: python analysis_tools/analyze_best_hybrid_results.py [results/run_best_hybrid_<jobid>]", file=sys.stderr)
+        print("Usage: python analysis_tools/analyze_best_hybrid_results.py [results/run_<jobname>_<jobid>]", file=sys.stderr)
         return 2
 
     try:

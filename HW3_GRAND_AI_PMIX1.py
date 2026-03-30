@@ -3098,6 +3098,130 @@ def _select_search_vars_ai_window_roi(union_vars: np.ndarray,
     }
 
 
+def _select_search_vars_ai_mix_roi(union_vars: np.ndarray,
+                                   unsat_checks: np.ndarray,
+                                   code_cfg: CodeConfig,
+                                   llr_for_sort: np.ndarray,
+                                   L: int,
+                                   cfg: ClusterGrandConfig,
+                                   llr_snapshot: Optional[np.ndarray] = None,
+                                   llr_channel: Optional[np.ndarray] = None) -> Tuple[np.ndarray, Dict[str, int]]:
+    """Mixture-of-experts ROI selector.
+
+    Combines a local window expert with a global ROI rank expert.
+    This is aimed at the measured hybrid failures in the current data: the
+    residuals are usually diffuse, so a pure local window often misses the real
+    rescue region, while a pure global list spends too much budget on scattered
+    bits. We therefore allocate part of the search budget to each expert and
+    interleave their strongest candidates.
+    """
+    union_vars = np.asarray(union_vars, dtype=np.int32)
+    L = int(max(L, 0))
+    if L <= 0 or union_vars.size == 0:
+        return np.array([], dtype=np.int32), {
+            "selection_mode_used": "ai_mix_roi",
+            "sv_seeded_count": 0,
+            "sv_neighbor_visits": 0,
+            "sv_score_len": int(union_vars.size),
+            "ai_mix_profile": "empty",
+            "ai_mix_local_budget": 0,
+            "ai_mix_global_budget": 0,
+        }
+
+    block_size = max(1, int(getattr(cfg, "ai_window_block_size", getattr(cfg, "ai_rank_roi_block_size", 64)) or 64))
+    block_conc = _ai_rank_roi_block_concentration(union_vars, block_size)
+    union_size = int(union_vars.size)
+    diffuse = (
+        float(union_size >= int(getattr(cfg, "ai_rank_roi_diffuse_union_size", 208) or 208))
+        and block_conc <= float(getattr(cfg, "ai_rank_roi_diffuse_block_concentration", 0.08) or 0.08)
+    )
+    compact = block_conc >= float(getattr(cfg, "ai_window_compact_single_threshold", 0.18) or 0.18)
+
+    if compact:
+        local_share = float(getattr(cfg, "ai_mix_local_share_compact", 0.72) or 0.72)
+        profile = "compact_local"
+    elif diffuse:
+        local_share = float(getattr(cfg, "ai_mix_local_share_diffuse", 0.38) or 0.38)
+        profile = "diffuse_global"
+    else:
+        local_share = float(getattr(cfg, "ai_mix_local_share_balanced", 0.55) or 0.55)
+        profile = "balanced"
+
+    local_budget = int(max(8, round(L * np.clip(local_share, 0.20, 0.85))))
+    local_budget = min(local_budget, L)
+    global_budget = int(max(8, L - local_budget))
+    if local_budget + global_budget < L:
+        global_budget += int(L - (local_budget + global_budget))
+
+    local_vars, local_meta = _select_search_vars_ai_window_roi(
+        union_vars=union_vars,
+        unsat_checks=unsat_checks,
+        code_cfg=code_cfg,
+        llr_for_sort=llr_for_sort,
+        L=local_budget,
+        cfg=cfg,
+        llr_snapshot=llr_snapshot,
+        llr_channel=llr_channel,
+    )
+    global_vars, global_meta = _select_search_vars_ai_rank_roi(
+        union_vars=union_vars,
+        unsat_checks=unsat_checks,
+        code_cfg=code_cfg,
+        llr_for_sort=llr_for_sort,
+        L=global_budget,
+        cfg=cfg,
+        llr_snapshot=llr_snapshot,
+        llr_channel=llr_channel,
+    )
+
+    local_list = [int(v) for v in np.asarray(local_vars, dtype=np.int32).tolist()]
+    global_list = [int(v) for v in np.asarray(global_vars, dtype=np.int32).tolist()]
+    selected: List[int] = []
+    seen = set()
+
+    # Interleave the two experts so the search set remains diverse on diffuse frames.
+    max_len = max(len(local_list), len(global_list))
+    if diffuse:
+        order = (global_list, local_list)
+    else:
+        order = (local_list, global_list)
+    for i in range(max_len):
+        for seq in order:
+            if i >= len(seq):
+                continue
+            v_int = int(seq[i])
+            if v_int not in seen:
+                selected.append(v_int)
+                seen.add(v_int)
+                if len(selected) >= L:
+                    break
+        if len(selected) >= L:
+            break
+
+    if len(selected) < L:
+        for seq in (local_list, global_list):
+            for v_int in seq:
+                v_int = int(v_int)
+                if v_int not in seen:
+                    selected.append(v_int)
+                    seen.add(v_int)
+                    if len(selected) >= L:
+                        break
+            if len(selected) >= L:
+                break
+
+    return np.asarray(selected[:L], dtype=np.int32), {
+        "selection_mode_used": "ai_mix_roi",
+        "sv_seeded_count": int(max(local_meta.get("sv_seeded_count", 0), global_meta.get("sv_seeded_count", 0))),
+        "sv_neighbor_visits": int(max(local_meta.get("sv_neighbor_visits", 0), global_meta.get("sv_neighbor_visits", 0))),
+        "sv_score_len": int(union_vars.size),
+        "ai_mix_profile": str(profile),
+        "ai_mix_local_budget": int(local_budget),
+        "ai_mix_global_budget": int(global_budget),
+        "ai_window_blocks_used": int(local_meta.get("ai_window_blocks_used", 0)),
+    }
+
+
 def _resolve_sort_llr_vector(llr_snapshot: np.ndarray,
                              llr_channel: Optional[np.ndarray],
                              cfg: ClusterGrandConfig) -> Tuple[np.ndarray, str]:
@@ -3189,7 +3313,18 @@ def _select_presolver_vars(union_vars: np.ndarray,
         }
 
     selection_mode = str(getattr(cfg, "selection_mode", "llr") or "llr").strip().lower()
-    if selection_mode in ("ai_window_roi", "aiwindow", "window_roi", "receiver9_window"):
+    if selection_mode in ("ai_mix_roi", "aimix", "mix_roi", "receiver9_mix"):
+        base_vars, meta = _select_search_vars_ai_mix_roi(
+            union_vars=union_vars,
+            unsat_checks=unsat_checks,
+            code_cfg=code_cfg,
+            llr_for_sort=llr_for_sort,
+            L=L_peel,
+            cfg=cfg,
+            llr_snapshot=llr_snapshot,
+            llr_channel=llr_channel,
+        )
+    elif selection_mode in ("ai_window_roi", "aiwindow", "window_roi", "receiver9_window"):
         base_vars, meta = _select_search_vars_ai_window_roi(
             union_vars=union_vars,
             unsat_checks=unsat_checks,
@@ -6229,7 +6364,18 @@ def run_local_grand_on_union_of_clusters(frame: FrameLog,
     L = _auto_pick_grand_search_size(L_full, cfg)
     selection_mode = str(getattr(cfg, "selection_mode", "llr") or "llr").strip().lower()
 
-    if selection_mode in ("ai_window_roi", "aiwindow", "window_roi", "receiver9_window"):
+    if selection_mode in ("ai_mix_roi", "aimix", "mix_roi", "receiver9_mix"):
+        search_vars, front_end_meta = _select_search_vars_ai_mix_roi(
+            union_vars=union_vars,
+            unsat_checks=unsat_checks,
+            code_cfg=code_cfg,
+            llr_for_sort=llr_for_sort,
+            L=L,
+            cfg=cfg,
+            llr_snapshot=llr_snapshot,
+            llr_channel=getattr(frame, "llr_channel", None),
+        )
+    elif selection_mode in ("ai_window_roi", "aiwindow", "window_roi", "receiver9_window"):
         search_vars, front_end_meta = _select_search_vars_ai_window_roi(
             union_vars=union_vars,
             unsat_checks=unsat_checks,
@@ -7435,7 +7581,7 @@ def grand_hw_cycles_from_result(
     # neighbour scan itself is already covered by cluster_unsat_edges above.
     if selection_mode_used in ("syndrome_vote", "sv", "receiver2"):
         cycles += _ceil_div(sv_score_len, add_pc)
-    elif selection_mode_used in ("ai_window_roi", "aiwindow", "window_roi", "receiver9_window", "ai_rank_roi", "airoi", "roi_rank", "receiver9_roi", "ai_rank", "ai", "airank", "receiver9"):
+    elif selection_mode_used in ("ai_mix_roi", "aimix", "mix_roi", "receiver9_mix", "ai_window_roi", "aiwindow", "window_roi", "receiver9_window", "ai_rank_roi", "airoi", "roi_rank", "receiver9_roi", "ai_rank", "ai", "airank", "receiver9"):
         # Weighted blend of vote, inverse-|LLR|, disagreement, density, plus lightweight block scoring.
         cycles += _ceil_div(4 * sv_score_len, add_pc)
 
@@ -10922,6 +11068,7 @@ def run_awgn_sweep_for_code(
                 policy_mode = str(getattr(ai_gate_cfg_awgn_air, "policy_mode", "linear_ucb") or "linear_ucb").strip().lower()
                 selection_mode = str(getattr(grand_cfg_awgn_air_full, "selection_mode", "llr") or "llr").strip().lower()
                 roi_modes = ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi")
+                mix_modes = ("ai_mix_roi", "aimix", "mix_roi", "receiver9_mix")
                 window_modes = ("ai_window_roi", "aiwindow", "window_roi", "receiver9_window")
                 if policy_mode in ("distilled_tree_bandit", "tree_bandit", "dt_bandit"):
                     if selection_mode in window_modes:
@@ -10943,7 +11090,9 @@ def run_awgn_sweep_for_code(
                     else:
                         dec_name = f"hybairroi{int(it)}"
                 elif policy_mode in ("probe_moe_roi_fix", "probe_moe_roi", "probe_moe", "probe_fix", "probe"):
-                    if selection_mode in window_modes:
+                    if selection_mode in mix_modes:
+                        dec_name = f"hybairpmix{int(it)}"
+                    elif selection_mode in window_modes:
                         dec_name = f"hybairpwin{int(it)}"
                     else:
                         dec_name = f"hybairprobe{int(it)}"
