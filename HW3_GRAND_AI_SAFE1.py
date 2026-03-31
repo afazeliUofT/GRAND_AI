@@ -4101,6 +4101,164 @@ def _select_search_vars_ai_tanner_trap_roi(union_vars: np.ndarray,
     return np.asarray(selected[:L], dtype=np.int32), meta
 
 
+
+def _select_search_vars_ai_dual_safe_roi(union_vars: np.ndarray,
+                                         unsat_checks: np.ndarray,
+                                         code_cfg: CodeConfig,
+                                         llr_for_sort: np.ndarray,
+                                         L: int,
+                                         cfg: ClusterGrandConfig,
+                                         llr_snapshot: Optional[np.ndarray] = None,
+                                         llr_channel: Optional[np.ndarray] = None) -> Tuple[np.ndarray, Dict[str, int]]:
+    """Safe dual-expert selector: mix-ROI + Tanner-trap fusion.
+
+    After a full LDPC stage-1 failure, hedge between a global/diffuse expert and
+    a Tanner-trap expert, then append a tiny disagreement scout set.
+    """
+    union_vars = np.asarray(union_vars, dtype=np.int32)
+    unsat_checks = np.asarray(unsat_checks, dtype=np.int32)
+    L = int(max(L, 0))
+    if L <= 0 or union_vars.size == 0:
+        return np.array([], dtype=np.int32), {
+            "selection_mode_used": "ai_dual_safe_roi",
+            "safe_profile": "empty",
+            "safe_prefilter": 0,
+            "safe_mix_budget": 0,
+            "safe_trap_budget": 0,
+            "safe_disagreement_added": 0,
+        }
+
+    block_size = max(1, int(getattr(cfg, "ai_roi_block_size", 64) or 64))
+    block_conc = _ai_rank_roi_block_concentration(union_vars, block_size)
+    union_size = int(union_vars.size)
+    diffuse = (
+        float(union_size) >= float(int(getattr(cfg, "ai_roi_diffuse_union_size", 224) or 224))
+        and float(block_conc) <= float(getattr(cfg, "ai_roi_diffuse_block_concentration", 0.08) or 0.08)
+    )
+    compact = float(block_conc) >= float(getattr(cfg, "ai_roi_compact_block_concentration", 0.10) or 0.10)
+    if compact:
+        trap_share = 0.68
+        profile = "compact_dual"
+    elif diffuse:
+        trap_share = 0.42
+        profile = "diffuse_dual"
+    else:
+        trap_share = 0.55
+        profile = "balanced_dual"
+
+    pre_cap = int(min(union_vars.size, max(L + 24, 2 * L, int(round(2.4 * max(L, 1))))))
+    mix_vars, mix_meta = _select_search_vars_ai_mix_roi(
+        union_vars=union_vars,
+        unsat_checks=unsat_checks,
+        code_cfg=code_cfg,
+        llr_for_sort=llr_for_sort,
+        L=pre_cap,
+        cfg=cfg,
+        llr_snapshot=llr_snapshot,
+        llr_channel=llr_channel,
+    )
+    trap_vars, trap_meta = _select_search_vars_ai_tanner_trap_roi(
+        union_vars=union_vars,
+        unsat_checks=unsat_checks,
+        code_cfg=code_cfg,
+        llr_for_sort=llr_for_sort,
+        L=pre_cap,
+        cfg=cfg,
+        llr_snapshot=llr_snapshot,
+        llr_channel=llr_channel,
+    )
+    mix_list = [int(v) for v in np.asarray(mix_vars, dtype=np.int32).tolist()]
+    trap_list = [int(v) for v in np.asarray(trap_vars, dtype=np.int32).tolist()]
+
+    trap_budget = int(min(L, max(1, round(float(L) * np.clip(trap_share, 0.20, 0.85)))))
+    mix_budget = int(max(0, L - trap_budget))
+
+    selected: List[int] = []
+    seen = set()
+    primary = trap_list if trap_share >= 0.5 else mix_list
+    secondary = mix_list if trap_share >= 0.5 else trap_list
+    primary_budget = trap_budget if trap_share >= 0.5 else mix_budget
+    secondary_budget = mix_budget if trap_share >= 0.5 else trap_budget
+
+    for v in primary[:primary_budget]:
+        vi = int(v)
+        if vi not in seen:
+            selected.append(vi)
+            seen.add(vi)
+            if len(selected) >= L:
+                break
+
+    if len(selected) < L:
+        sec_idx = 0
+        pri_idx = int(primary_budget)
+        while len(selected) < L:
+            progressed = False
+            if sec_idx < min(len(secondary), secondary_budget):
+                vi = int(secondary[sec_idx])
+                sec_idx += 1
+                if vi not in seen:
+                    selected.append(vi)
+                    seen.add(vi)
+                progressed = True
+                if len(selected) >= L:
+                    break
+            if pri_idx < len(primary):
+                vi = int(primary[pri_idx])
+                pri_idx += 1
+                if vi not in seen:
+                    selected.append(vi)
+                    seen.add(vi)
+                progressed = True
+                if len(selected) >= L:
+                    break
+            if not progressed:
+                break
+
+    disagreement_added = 0
+    if len(selected) < L and (llr_snapshot is not None) and (llr_channel is not None):
+        llr_snapshot = np.asarray(llr_snapshot, dtype=np.float32)
+        llr_channel = np.asarray(llr_channel, dtype=np.float32)
+        snap_sign = np.sign(llr_snapshot[union_vars]).astype(np.int8, copy=False)
+        chan_sign = np.sign(llr_channel[union_vars]).astype(np.int8, copy=False)
+        disagree_mask = (snap_sign != 0) & (chan_sign != 0) & (snap_sign != chan_sign)
+        if np.any(disagree_mask):
+            disagree_vars = union_vars[disagree_mask]
+            weights = np.minimum(np.abs(llr_snapshot[disagree_vars]), np.abs(llr_channel[disagree_vars])).astype(np.float32, copy=False)
+            order = np.argsort(weights, kind='stable')
+            for idx in order.tolist():
+                vi = int(disagree_vars[int(idx)])
+                if vi not in seen:
+                    selected.append(vi)
+                    seen.add(vi)
+                    disagreement_added += 1
+                    if len(selected) >= L:
+                        break
+
+    if len(selected) < L:
+        for seq in (trap_list, mix_list, union_vars.tolist()):
+            for v in seq:
+                vi = int(v)
+                if vi not in seen:
+                    selected.append(vi)
+                    seen.add(vi)
+                    if len(selected) >= L:
+                        break
+            if len(selected) >= L:
+                break
+
+    meta = dict(mix_meta)
+    meta.update({
+        "selection_mode_used": "ai_dual_safe_roi",
+        "safe_profile": str(profile),
+        "safe_prefilter": int(pre_cap),
+        "safe_mix_budget": int(mix_budget),
+        "safe_trap_budget": int(trap_budget),
+        "safe_disagreement_added": int(disagreement_added),
+        "safe_mix_profile": str(mix_meta.get("ai_mix_profile", "mix")),
+        "safe_trap_profile": str(trap_meta.get("ai_tg3_profile", "trap")),
+    })
+    return np.asarray(selected[:L], dtype=np.int32), meta
+
 def _resolve_sort_llr_vector(llr_snapshot: np.ndarray,
                              llr_channel: Optional[np.ndarray],
                              cfg: ClusterGrandConfig) -> Tuple[np.ndarray, str]:
@@ -4192,7 +4350,18 @@ def _select_presolver_vars(union_vars: np.ndarray,
         }
 
     selection_mode = str(getattr(cfg, "selection_mode", "llr") or "llr").strip().lower()
-    if selection_mode in ("ai_tanner_trap_roi", "aitg3", "tanner_trap_roi", "receiver9_tg3"):
+    if selection_mode in ("ai_dual_safe_roi", "aidualsafe", "dual_safe_roi", "receiver9_safe"):
+        base_vars, meta = _select_search_vars_ai_dual_safe_roi(
+            union_vars=union_vars,
+            unsat_checks=unsat_checks,
+            code_cfg=code_cfg,
+            llr_for_sort=llr_for_sort,
+            L=L_peel,
+            cfg=cfg,
+            llr_snapshot=llr_snapshot,
+            llr_channel=llr_channel,
+        )
+    elif selection_mode in ("ai_tanner_trap_roi", "aitg3", "tanner_trap_roi", "receiver9_tg3"):
         base_vars, meta = _select_search_vars_ai_tanner_trap_roi(
             union_vars=union_vars,
             unsat_checks=unsat_checks,
@@ -8526,7 +8695,7 @@ def grand_hw_cycles_from_result(
     # neighbour scan itself is already covered by cluster_unsat_edges above.
     if selection_mode_used in ("syndrome_vote", "sv", "receiver2"):
         cycles += _ceil_div(sv_score_len, add_pc)
-    elif selection_mode_used in ("ai_tanner_trap_roi", "aitg3", "tanner_trap_roi", "receiver9_tg3", "ai_tanner_subgraph_roi", "aitg2", "tanner_subgraph_roi", "receiver9_tg2", "ai_tanner_roi", "aitg", "tanner_roi", "receiver9_tg", "ai_mix_roi", "aimix", "mix_roi", "receiver9_mix", "ai_window_roi", "aiwindow", "window_roi", "receiver9_window", "ai_rank_roi", "airoi", "roi_rank", "receiver9_roi", "ai_rank", "ai", "airank", "receiver9"):
+    elif selection_mode_used in ("ai_dual_safe_roi", "aidualsafe", "dual_safe_roi", "receiver9_safe", "ai_tanner_trap_roi", "aitg3", "tanner_trap_roi", "receiver9_tg3", "ai_tanner_subgraph_roi", "aitg2", "tanner_subgraph_roi", "receiver9_tg2", "ai_tanner_roi", "aitg", "tanner_roi", "receiver9_tg", "ai_mix_roi", "aimix", "mix_roi", "receiver9_mix", "ai_window_roi", "aiwindow", "window_roi", "receiver9_window", "ai_rank_roi", "airoi", "roi_rank", "receiver9_roi", "ai_rank", "ai", "airank", "receiver9"):
         # Weighted blend of vote, inverse-|LLR|, disagreement, density, plus lightweight block scoring.
         cycles += _ceil_div(4 * sv_score_len, add_pc)
 
@@ -9909,6 +10078,60 @@ def _grand_attempt_exhausted(res: ClusterGrandResult, cfg: ClusterGrandConfig) -
 
 
 
+
+def _weighted_llr_mismatch_cost(bits: np.ndarray, llr_channel: np.ndarray) -> float:
+    bits = np.asarray(bits, dtype=np.uint8)
+    llr_channel = np.asarray(llr_channel, dtype=np.float32)
+    hard_chan = (llr_channel < 0.0).astype(np.uint8, copy=False)
+    mism = (bits != hard_chan)
+    if not np.any(mism):
+        return 0.0
+    return float(np.sum(np.abs(llr_channel[mism]), dtype=np.float64))
+
+
+def _stage2_safe_accept_success(frame: FrameLog,
+                                res: ClusterGrandResult) -> Tuple[bool, Dict[str, float]]:
+    enabled = bool(_env_int("GRAND_AIR_SAFE_ACCEPT_ENABLE", 0))
+    if not enabled:
+        return True, {"safe_accept_enabled": 0.0}
+
+    llr_channel = getattr(frame, "llr_channel", None)
+    hard_snaps = getattr(frame, "snapshots", {}).get("hard_bits", {}) if getattr(frame, "snapshots", None) is not None else {}
+    snap_i = int(getattr(res, "snapshot_iter_used", 0) or 0)
+    base_bits = hard_snaps.get(snap_i)
+    if llr_channel is None or base_bits is None:
+        return True, {"safe_accept_enabled": 1.0, "safe_accept_missing_context": 1.0}
+
+    llr_channel = np.asarray(llr_channel, dtype=np.float32)
+    base_bits = np.asarray(base_bits, dtype=np.uint8).copy()
+    cand_bits = base_bits.copy()
+    flipped = np.asarray(getattr(res, "flipped_vars", np.array([], dtype=np.int32)), dtype=np.int32)
+    if flipped.size > 0:
+        cand_bits[flipped] ^= np.uint8(1)
+
+    base_cost = _weighted_llr_mismatch_cost(base_bits, llr_channel)
+    cand_cost = _weighted_llr_mismatch_cost(cand_bits, llr_channel)
+    hard_chan = (llr_channel < 0.0).astype(np.uint8, copy=False)
+    strong_abs = float(os.environ.get("GRAND_AIR_SAFE_ACCEPT_STRONG_ABS", "5.0") or "5.0")
+    slack = float(os.environ.get("GRAND_AIR_SAFE_ACCEPT_COST_SLACK", "0.75") or "0.75")
+    max_strong_wrong = int(os.environ.get("GRAND_AIR_SAFE_ACCEPT_MAX_STRONG_WRONG", "0") or "0")
+
+    if flipped.size > 0:
+        strong_wrong = int(np.sum((np.abs(llr_channel[flipped]) >= strong_abs) & (cand_bits[flipped] != hard_chan[flipped])))
+    else:
+        strong_wrong = 0
+
+    accept = bool((cand_cost <= (base_cost + slack)) and (strong_wrong <= max_strong_wrong))
+    return accept, {
+        "safe_accept_enabled": 1.0,
+        "safe_accept_base_cost": float(base_cost),
+        "safe_accept_candidate_cost": float(cand_cost),
+        "safe_accept_cost_delta": float(cand_cost - base_cost),
+        "safe_accept_strong_wrong": float(strong_wrong),
+        "safe_accept_slack": float(slack),
+        "safe_accept_accept": 1.0 if accept else 0.0,
+    }
+
 def _run_stage2_single_snapshot(
     frame: FrameLog,
     sim_cfg: SimulationConfig,
@@ -10455,7 +10678,19 @@ def run_hybrid_ldpc_grand_adaptive(
                 if hw_c_grand == 0:
                     hw_c_grand = grand_hw_cycles_from_result(res, sim_cfg, hw_model)
 
+                safe_accept = True
                 if bool(res.success):
+                    safe_accept, safe_meta = _stage2_safe_accept_success(frame, res)
+                    for _k, _v in safe_meta.items():
+                        try:
+                            setattr(res, _k, _v)
+                        except Exception:
+                            pass
+                    if not safe_accept:
+                        stage2_success_profile = "guard_reject"
+                        setattr(res, "stage2_profile_name", stage2_success_profile)
+
+                if bool(res.success) and safe_accept:
                     be_after = int(res.final_bit_errors)
                 else:
                     be_after = be1
@@ -12097,7 +12332,7 @@ def run_awgn_sweep_for_code(
                 roi_modes = ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi")
                 mix_modes = ("ai_mix_roi", "aimix", "mix_roi", "receiver9_mix")
                 window_modes = ("ai_window_roi", "aiwindow", "window_roi", "receiver9_window")
-                graph_modes = ("ai_tanner_trap_roi", "aitg3", "tanner_trap_roi", "receiver9_tg3", "ai_tanner_subgraph_roi", "aitg2", "tanner_subgraph_roi", "receiver9_tg2", "ai_tanner_roi", "aitg", "tanner_roi", "receiver9_tg")
+                graph_modes = ("ai_dual_safe_roi", "aidualsafe", "dual_safe_roi", "receiver9_safe", "ai_tanner_trap_roi", "aitg3", "tanner_trap_roi", "receiver9_tg3", "ai_tanner_subgraph_roi", "aitg2", "tanner_subgraph_roi", "receiver9_tg2", "ai_tanner_roi", "aitg", "tanner_roi", "receiver9_tg")
                 if policy_mode in ("distilled_tree_bandit", "tree_bandit", "dt_bandit"):
                     if selection_mode in window_modes:
                         dec_name = f"hybairdtbwin{int(it)}"
@@ -12118,7 +12353,9 @@ def run_awgn_sweep_for_code(
                     else:
                         dec_name = f"hybairroi{int(it)}"
                 elif policy_mode in ("probe_moe_roi_fix", "probe_moe_roi", "probe_moe", "probe_fix", "probe"):
-                    if selection_mode in ("ai_tanner_trap_roi", "aitg3", "tanner_trap_roi", "receiver9_tg3"):
+                    if selection_mode in ("ai_dual_safe_roi", "aidualsafe", "dual_safe_roi", "receiver9_safe"):
+                        dec_name = f"hybairsafe{int(it)}"
+                    elif selection_mode in ("ai_tanner_trap_roi", "aitg3", "tanner_trap_roi", "receiver9_tg3"):
                         dec_name = f"hybairtrap{int(it)}"
                     elif selection_mode in ("ai_tanner_subgraph_roi", "aitg2", "tanner_subgraph_roi", "receiver9_tg2"):
                         dec_name = f"hybairtgsub{int(it)}"

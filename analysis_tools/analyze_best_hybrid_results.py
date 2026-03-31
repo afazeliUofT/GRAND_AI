@@ -20,7 +20,7 @@ import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
 DecoderRow = Dict[str, str]
-HYBRID_PRIORITY = ["hybairtrap8", "hybairtrap10", "hybairtrap12", "hybairtrap15", "hybairtgsub15", "hybairtg15", "hybairpmix15", "hybairpfix15", "hybairpwin15", "hybairprobe15", "hybairprobefix15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
+HYBRID_PRIORITY = ["hybairsafe15", "hybairtrap8", "hybairtrap10", "hybairtrap12", "hybairtrap15", "hybairtgsub15", "hybairtg15", "hybairpmix15", "hybairpfix15", "hybairpwin15", "hybairprobe15", "hybairprobefix15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
 
 
 def _to_float(value: object) -> float:
@@ -129,6 +129,21 @@ def _extract_expected_triplet_from_sbatch(path: str) -> Tuple[str, str, str]:
     return dec, pol, sel
 
 
+def _extract_iter_pair_from_sbatch(path: str) -> Tuple[str, str]:
+    ldpc = stg = ""
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            text = f.read()
+    except Exception:
+        return ldpc, stg
+    m = re.search(r'LDPC_ITERS=([^\s]+)', text)
+    if m:
+        ldpc = m.group(1).strip()
+    m = re.search(r'STAGE1_ITERS=([^\s]+)', text)
+    if m:
+        stg = m.group(1).strip()
+    return ldpc, stg
+
 def _load_result_set(base_dir: str) -> Tuple[str, List[DecoderRow], List[DecoderRow], List[DecoderRow]]:
     if not os.path.isdir(base_dir):
         raise FileNotFoundError(f"Result directory not found: {base_dir}")
@@ -205,6 +220,8 @@ def main() -> int:
     _print_header("Comparing decoders")
     print(f"Legacy baseline : ldpc15")
     print(f"Hybrid analyzed : {hybrid_name}")
+    if hybrid_name == "hybairsafe15":
+        print("INFO: active result is the safe full-LDPC dual-expert run.")
     if hybrid_name == "hybair15":
         print("WARNING: active result is still heuristic AIR, not the distilled-tree run.")
     if hybrid_name == "hybairdtbroi15":
@@ -236,6 +253,11 @@ def main() -> int:
         exp_dec, exp_pol, exp_sel = _extract_expected_triplet_from_sbatch(sbatch_path)
         if exp_dec or exp_pol or exp_sel:
             print(f"Current sbatch expects : decoder={exp_dec or 'n/a'} policy={exp_pol or 'n/a'} selection={exp_sel or 'n/a'}")
+        ldpc_it, stg_it = _extract_iter_pair_from_sbatch(sbatch_path)
+        if ldpc_it or stg_it:
+            print(f"Current sbatch iters   : ldpc={ldpc_it or 'n/a'} stage1={stg_it or 'n/a'}")
+            if ldpc_it and stg_it and ldpc_it != stg_it:
+                print("WARNING: hybrid stage-1 iterations differ from ldpc15 baseline.\nResults can look worse simply because the hybrid hands off too early.")
         if log_path is not None and verify_lines and (exp_dec or exp_pol or exp_sel):
             latest_verify = verify_lines[-1]
             mismatch = (exp_dec and (f'decoder={exp_dec}' not in latest_verify)) or (exp_pol and (f'policy={exp_pol}' not in latest_verify)) or (exp_sel and (f'selection={exp_sel}' not in latest_verify))
