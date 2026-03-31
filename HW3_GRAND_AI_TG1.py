@@ -3222,6 +3222,340 @@ def _select_search_vars_ai_mix_roi(union_vars: np.ndarray,
     }
 
 
+def _get_ai_tanner_static_prior(code_cfg: CodeConfig) -> np.ndarray:
+    """Return a cached static Tanner-graph prior per variable node.
+
+    This is a very light proxy for an offline teacher trained on the LDPC
+    Tanner graph: variables that sit in denser check-overlap / short-cycle
+    neighborhoods get a slightly higher prior score. Runtime cost is zero after
+    the first build because the vector is cached on ``code_cfg``.
+    """
+    cached = getattr(code_cfg, "_ai_tanner_static_prior_cache", None)
+    if isinstance(cached, np.ndarray) and cached.size == int(code_cfg.N):
+        return np.asarray(cached, dtype=np.float32)
+
+    N = int(code_cfg.N)
+    pair_overlap: Dict[Tuple[int, int], int] = {}
+    check_deg = np.asarray([max(1, len(ch)) for ch in code_cfg.checks_to_vars], dtype=np.float64)
+
+    for v in range(N):
+        checks = [int(c) for c in code_cfg.vars_to_checks[v]]
+        for i in range(len(checks)):
+            ci = int(checks[i])
+            for j in range(i + 1, len(checks)):
+                cj = int(checks[j])
+                key = (ci, cj) if ci < cj else (cj, ci)
+                pair_overlap[key] = int(pair_overlap.get(key, 0) + 1)
+
+    prior = np.zeros(N, dtype=np.float64)
+    for v in range(N):
+        checks = [int(c) for c in code_cfg.vars_to_checks[v]]
+        deg_v = float(len(checks))
+        cycle_score = 0.0
+        overlap_score = 0.0
+        inv_check_score = 0.0
+        for c in checks:
+            inv_check_score += 1.0 / float(max(1.0, check_deg[int(c)]))
+        for i in range(len(checks)):
+            ci = int(checks[i])
+            for j in range(i + 1, len(checks)):
+                cj = int(checks[j])
+                key = (ci, cj) if ci < cj else (cj, ci)
+                ov = float(pair_overlap.get(key, 0))
+                overlap_score += ov
+                if ov > 1.0:
+                    cycle_score += (ov - 1.0)
+        prior[v] = 0.55 * cycle_score + 0.20 * overlap_score + 0.15 * deg_v + 0.10 * inv_check_score
+
+    pmin = float(prior.min()) if prior.size else 0.0
+    pmax = float(prior.max()) if prior.size else 1.0
+    if pmax > pmin:
+        prior = (prior - pmin) / float(pmax - pmin)
+    else:
+        prior[:] = 0.0
+    prior = prior.astype(np.float32, copy=False)
+    setattr(code_cfg, "_ai_tanner_static_prior_cache", prior)
+    return prior
+
+
+def _select_search_vars_ai_tanner_roi(union_vars: np.ndarray,
+                                      unsat_checks: np.ndarray,
+                                      code_cfg: CodeConfig,
+                                      llr_for_sort: np.ndarray,
+                                      L: int,
+                                      cfg: ClusterGrandConfig,
+                                      llr_snapshot: Optional[np.ndarray] = None,
+                                      llr_channel: Optional[np.ndarray] = None) -> Tuple[np.ndarray, Dict[str, int]]:
+    """Graph-aware ROI selector with a distilled Tanner prior.
+
+    Runtime behavior:
+      1) cheap static Tanner prior (precomputed once);
+      2) one/two tiny rounds of message passing on the current unsatisfied-check
+         subgraph;
+      3) local/global mixture so diffuse residuals still get a global scout.
+
+    This is written to approximate a future offline-trained Tanner-GNN teacher,
+    but its live inference path stays lightweight.
+    """
+    union_vars = np.asarray(union_vars, dtype=np.int32)
+    unsat_checks = np.asarray(unsat_checks, dtype=np.int32)
+    L = int(max(L, 0))
+    if L <= 0 or union_vars.size == 0:
+        return np.array([], dtype=np.int32), {
+            "selection_mode_used": "ai_tanner_roi",
+            "sv_seeded_count": 0,
+            "sv_neighbor_visits": 0,
+            "sv_score_len": int(union_vars.size),
+            "ai_tanner_profile": "empty",
+            "ai_tanner_local_budget": 0,
+            "ai_tanner_global_budget": 0,
+            "ai_tanner_blocks_used": 0,
+        }
+
+    abs_llr_union = np.abs(llr_for_sort[union_vars]).astype(np.float64, copy=False)
+    eps = float(getattr(cfg, "sv_epsilon", 1e-3) or 1e-3)
+    vote_counts = np.zeros(union_vars.size, dtype=np.int32)
+    var_to_local = {int(v): i for i, v in enumerate(union_vars.tolist())}
+    sv_neighbor_visits = 0
+
+    for j in unsat_checks:
+        for v in code_cfg.checks_to_vars[int(j)]:
+            loc = var_to_local.get(int(v), None)
+            if loc is None:
+                continue
+            vote_counts[loc] += 1
+            sv_neighbor_visits += 1
+
+    max_vote = max(1, int(vote_counts.max()) if vote_counts.size else 0)
+    inv_llr = 1.0 / (abs_llr_union + eps)
+    max_inv_llr = float(inv_llr.max()) if inv_llr.size else 1.0
+    if max_inv_llr <= 0.0:
+        max_inv_llr = 1.0
+
+    vote_norm = vote_counts.astype(np.float64) / float(max_vote)
+    inv_llr_norm = inv_llr / float(max_inv_llr)
+    var_deg = np.asarray([max(1, len(code_cfg.vars_to_checks[int(v)])) for v in union_vars.tolist()], dtype=np.float64)
+    density = np.clip(vote_counts.astype(np.float64) / var_deg, 0.0, 1.0)
+
+    disagree = np.zeros(union_vars.size, dtype=np.float64)
+    weak_disagree = np.zeros(union_vars.size, dtype=np.float64)
+    weak_thr = float(getattr(cfg, "ai_rank_roi_weak_llr_abs_cap", 2.5) or 2.5)
+    if abs_llr_union.size > 0:
+        try:
+            qthr = float(np.quantile(abs_llr_union, float(getattr(cfg, "ai_rank_roi_weak_llr_quantile", 0.30) or 0.30)))
+        except Exception:
+            qthr = float(np.median(abs_llr_union)) if abs_llr_union.size else weak_thr
+        weak_thr = min(weak_thr, max(0.5, qthr))
+    weak_mask = (abs_llr_union <= weak_thr)
+
+    if llr_snapshot is not None and llr_channel is not None:
+        llr_snapshot = np.asarray(llr_snapshot, dtype=np.float32)
+        llr_channel = np.asarray(llr_channel, dtype=np.float32)
+        snap_sign = np.sign(llr_snapshot[union_vars]).astype(np.int8, copy=False)
+        chan_sign = np.sign(llr_channel[union_vars]).astype(np.int8, copy=False)
+        disagree = ((snap_sign * chan_sign) < 0).astype(np.float64, copy=False)
+        weak_disagree = ((disagree > 0.0) & weak_mask).astype(np.float64, copy=False)
+
+    block_size = max(1, int(getattr(cfg, "ai_tanner_block_size", getattr(cfg, "ai_window_block_size", 64)) or 64))
+    block_conc = _ai_rank_roi_block_concentration(union_vars, block_size)
+    union_size = int(union_vars.size)
+    diffuse = (
+        float(union_size >= int(getattr(cfg, "ai_tanner_diffuse_union_size", 192) or 192))
+        and block_conc <= float(getattr(cfg, "ai_tanner_diffuse_block_concentration", 0.09) or 0.09)
+    )
+    compact = block_conc >= float(getattr(cfg, "ai_tanner_compact_block_concentration", 0.12) or 0.12)
+
+    static_prior_full = _get_ai_tanner_static_prior(code_cfg)
+    static_prior = np.asarray(static_prior_full[union_vars], dtype=np.float64)
+    if static_prior.size and float(static_prior.max()) > float(static_prior.min()):
+        static_prior = (static_prior - float(static_prior.min())) / float(max(1e-9, float(static_prior.max() - static_prior.min())))
+    else:
+        static_prior = np.zeros_like(inv_llr_norm)
+
+    # Tiny Tanner-subgraph message passing on the current residual.
+    check_core: Dict[int, float] = {}
+    check_locals: Dict[int, List[int]] = {}
+    for j in unsat_checks.tolist():
+        neigh_locs: List[int] = []
+        for v in code_cfg.checks_to_vars[int(j)]:
+            loc = var_to_local.get(int(v), None)
+            if loc is not None:
+                neigh_locs.append(int(loc))
+        if not neigh_locs:
+            continue
+        weak_rate = float(np.mean(weak_mask[neigh_locs])) if neigh_locs else 0.0
+        dis_rate = float(np.mean(disagree[neigh_locs])) if neigh_locs else 0.0
+        dens_rate = float(np.mean(density[neigh_locs])) if neigh_locs else 0.0
+        stat_rate = float(np.mean(static_prior[neigh_locs])) if neigh_locs else 0.0
+        check_core[int(j)] = float(0.40 + 0.32 * weak_rate + 0.26 * dis_rate + 0.18 * dens_rate + 0.14 * stat_rate)
+        check_locals[int(j)] = neigh_locs
+
+    msg1 = np.zeros(union_vars.size, dtype=np.float64)
+    for loc, v_int in enumerate(union_vars.tolist()):
+        s = 0.0
+        for c in code_cfg.vars_to_checks[int(v_int)]:
+            ci = int(c)
+            if ci not in check_core:
+                continue
+            s += float(check_core[ci]) / math.sqrt(float(max(1, len(code_cfg.checks_to_vars[ci]))))
+        msg1[loc] = s / math.sqrt(float(max(1, len(code_cfg.vars_to_checks[int(v_int)]))))
+    if msg1.size and float(msg1.max()) > float(msg1.min()):
+        msg1 = (msg1 - float(msg1.min())) / float(max(1e-9, float(msg1.max() - msg1.min())))
+
+    check_core_2 = {}
+    for ci, neigh_locs in check_locals.items():
+        avg1 = float(np.mean(msg1[neigh_locs])) if neigh_locs else 0.0
+        check_core_2[int(ci)] = float(check_core[ci] * (0.65 + 0.35 * avg1))
+
+    msg2 = np.zeros(union_vars.size, dtype=np.float64)
+    for loc, v_int in enumerate(union_vars.tolist()):
+        s = 0.0
+        for c in code_cfg.vars_to_checks[int(v_int)]:
+            ci = int(c)
+            if ci not in check_core_2:
+                continue
+            s += float(check_core_2[ci]) / math.sqrt(float(max(1, len(code_cfg.checks_to_vars[ci]))))
+        msg2[loc] = s / math.sqrt(float(max(1, len(code_cfg.vars_to_checks[int(v_int)]))))
+    if msg2.size and float(msg2.max()) > float(msg2.min()):
+        msg2 = (msg2 - float(msg2.min())) / float(max(1e-9, float(msg2.max() - msg2.min())))
+
+    w_vote = float(getattr(cfg, "ai_rank_vote_weight", 1.00) or 1.00)
+    w_llr = float(getattr(cfg, "ai_rank_llr_weight", 0.85) or 0.85)
+    w_dis = float(getattr(cfg, "ai_rank_disagreement_weight", 0.55) or 0.55)
+    w_den = float(getattr(cfg, "ai_rank_density_weight", 0.35) or 0.35)
+    w_msg = float(getattr(cfg, "ai_tanner_message_weight", 1.00) or 1.00)
+    w_cycle = float(getattr(cfg, "ai_tanner_cycle_weight", 0.40) or 0.40)
+    w_static = float(getattr(cfg, "ai_tanner_static_prior_weight", 0.30) or 0.30)
+    conflict_bonus = float(getattr(cfg, "ai_rank_roi_local_conflict_bonus", 0.30) or 0.30)
+
+    graph_score = (
+        w_vote * vote_norm
+        + w_llr * inv_llr_norm
+        + w_dis * disagree * inv_llr_norm
+        + w_den * density
+        + w_msg * msg2
+        + w_cycle * msg1
+        + w_static * static_prior
+        + conflict_bonus * weak_disagree * (0.55 * msg2 + 0.45 * inv_llr_norm)
+    )
+
+    if compact:
+        local_share = float(getattr(cfg, "ai_tanner_local_share_compact", 0.66) or 0.66)
+        profile = "compact_tanner"
+    elif diffuse:
+        local_share = float(getattr(cfg, "ai_tanner_local_share_diffuse", 0.30) or 0.30)
+        profile = "diffuse_tanner"
+    else:
+        local_share = float(getattr(cfg, "ai_tanner_local_share_balanced", 0.48) or 0.48)
+        profile = "balanced_tanner"
+
+    local_budget = int(max(8, round(float(L) * np.clip(local_share, 0.18, 0.82))))
+    local_budget = min(local_budget, L)
+    global_budget = max(1, int(L - local_budget))
+    if local_budget + global_budget < L:
+        global_budget += int(L - (local_budget + global_budget))
+
+    blocks = (union_vars // block_size).astype(np.int64)
+    block_to_locs: Dict[int, List[int]] = {}
+    for loc, blk in enumerate(blocks.tolist()):
+        block_to_locs.setdefault(int(blk), []).append(int(loc))
+
+    block_scores: List[Tuple[float, int]] = []
+    for blk, locs in block_to_locs.items():
+        locs_arr = np.asarray(locs, dtype=np.int32)
+        top_local = np.sort(graph_score[locs_arr])[-min(4, locs_arr.size):]
+        top_mean = float(np.mean(top_local)) if top_local.size else 0.0
+        dis_mean = float(np.mean(weak_disagree[locs_arr])) if locs_arr.size else 0.0
+        stat_mean = float(np.mean(static_prior[locs_arr])) if locs_arr.size else 0.0
+        blk_score = top_mean + 0.25 * dis_mean + 0.18 * stat_mean
+        block_scores.append((float(blk_score), int(blk)))
+    block_scores.sort(key=lambda t: (-float(t[0]), int(t[1])))
+
+    top_blocks = int(getattr(cfg, "ai_tanner_top_blocks", getattr(cfg, "ai_window_top_blocks", 2)) or 2)
+    if diffuse:
+        top_blocks += int(getattr(cfg, "ai_tanner_diffuse_extra_blocks", getattr(cfg, "ai_window_diffuse_extra_blocks", 1)) or 1)
+    if compact:
+        top_blocks = max(1, min(2, top_blocks))
+    neighbor_blocks = max(0, int(getattr(cfg, "ai_tanner_neighbor_blocks", getattr(cfg, "ai_window_neighbor_blocks", 1)) or 1))
+
+    chosen_blocks: List[int] = []
+    chosen_seen = set()
+    for _score, blk in block_scores[:max(1, top_blocks)]:
+        for b in range(int(blk) - neighbor_blocks, int(blk) + neighbor_blocks + 1):
+            if b in block_to_locs and b not in chosen_seen:
+                chosen_blocks.append(int(b))
+                chosen_seen.add(int(b))
+
+    local_order: List[int] = []
+    for blk in chosen_blocks:
+        locs = block_to_locs.get(int(blk), [])
+        ranked = sorted(locs, key=lambda loc: (-float(graph_score[int(loc)]), float(abs_llr_union[int(loc)]), int(union_vars[int(loc)])))
+        local_order.extend(ranked)
+
+    global_order = sorted(range(union_vars.size), key=lambda loc: (-float(graph_score[int(loc)]), float(abs_llr_union[int(loc)]), int(union_vars[int(loc)])))
+
+    seed_count = max(4, int(getattr(cfg, "ai_tanner_top_global_extra", 10) or 10))
+    seeds = sorted(range(union_vars.size), key=lambda loc: (-float(weak_disagree[int(loc)]), -float(graph_score[int(loc)]), float(abs_llr_union[int(loc)]), int(union_vars[int(loc)])))[:min(seed_count, union_vars.size)]
+
+    selected: List[int] = []
+    seen = set()
+    for loc in seeds:
+        v_int = int(union_vars[int(loc)])
+        if v_int not in seen:
+            selected.append(v_int)
+            seen.add(v_int)
+            if len(selected) >= min(L, seed_count):
+                break
+
+    local_taken = 0
+    global_taken = 0
+    local_seq = local_order if profile != "diffuse_tanner" else global_order
+    global_seq = global_order if profile != "diffuse_tanner" else local_order
+
+    li = gi = 0
+    while len(selected) < L and (li < len(local_seq) or gi < len(global_seq)):
+        if local_taken < local_budget and li < len(local_seq):
+            v_int = int(union_vars[int(local_seq[li])])
+            li += 1
+            if v_int not in seen:
+                selected.append(v_int)
+                seen.add(v_int)
+                local_taken += 1
+                if len(selected) >= L:
+                    break
+        if global_taken < global_budget and gi < len(global_seq):
+            v_int = int(union_vars[int(global_seq[gi])])
+            gi += 1
+            if v_int not in seen:
+                selected.append(v_int)
+                seen.add(v_int)
+                global_taken += 1
+                if len(selected) >= L:
+                    break
+        if (local_taken >= local_budget or li >= len(local_seq)) and (global_taken >= global_budget or gi >= len(global_seq)):
+            break
+
+    if len(selected) < L:
+        for loc in global_order:
+            v_int = int(union_vars[int(loc)])
+            if v_int not in seen:
+                selected.append(v_int)
+                seen.add(v_int)
+                if len(selected) >= L:
+                    break
+
+    return np.asarray(selected[:L], dtype=np.int32), {
+        "selection_mode_used": "ai_tanner_roi",
+        "sv_seeded_count": int(min(len(seeds), L)),
+        "sv_neighbor_visits": int(sv_neighbor_visits),
+        "sv_score_len": int(union_vars.size),
+        "ai_tanner_profile": str(profile),
+        "ai_tanner_local_budget": int(local_budget),
+        "ai_tanner_global_budget": int(global_budget),
+        "ai_tanner_blocks_used": int(len(chosen_blocks)),
+    }
+
+
 def _resolve_sort_llr_vector(llr_snapshot: np.ndarray,
                              llr_channel: Optional[np.ndarray],
                              cfg: ClusterGrandConfig) -> Tuple[np.ndarray, str]:
@@ -3313,7 +3647,18 @@ def _select_presolver_vars(union_vars: np.ndarray,
         }
 
     selection_mode = str(getattr(cfg, "selection_mode", "llr") or "llr").strip().lower()
-    if selection_mode in ("ai_mix_roi", "aimix", "mix_roi", "receiver9_mix"):
+    if selection_mode in ("ai_tanner_roi", "aitg", "tanner_roi", "receiver9_tg"):
+        base_vars, meta = _select_search_vars_ai_tanner_roi(
+            union_vars=union_vars,
+            unsat_checks=unsat_checks,
+            code_cfg=code_cfg,
+            llr_for_sort=llr_for_sort,
+            L=L_peel,
+            cfg=cfg,
+            llr_snapshot=llr_snapshot,
+            llr_channel=llr_channel,
+        )
+    elif selection_mode in ("ai_mix_roi", "aimix", "mix_roi", "receiver9_mix"):
         base_vars, meta = _select_search_vars_ai_mix_roi(
             union_vars=union_vars,
             unsat_checks=unsat_checks,
@@ -6364,7 +6709,18 @@ def run_local_grand_on_union_of_clusters(frame: FrameLog,
     L = _auto_pick_grand_search_size(L_full, cfg)
     selection_mode = str(getattr(cfg, "selection_mode", "llr") or "llr").strip().lower()
 
-    if selection_mode in ("ai_mix_roi", "aimix", "mix_roi", "receiver9_mix"):
+    if selection_mode in ("ai_tanner_roi", "aitg", "tanner_roi", "receiver9_tg"):
+        search_vars, front_end_meta = _select_search_vars_ai_tanner_roi(
+            union_vars=union_vars,
+            unsat_checks=unsat_checks,
+            code_cfg=code_cfg,
+            llr_for_sort=llr_for_sort,
+            L=L,
+            cfg=cfg,
+            llr_snapshot=llr_snapshot,
+            llr_channel=getattr(frame, "llr_channel", None),
+        )
+    elif selection_mode in ("ai_mix_roi", "aimix", "mix_roi", "receiver9_mix"):
         search_vars, front_end_meta = _select_search_vars_ai_mix_roi(
             union_vars=union_vars,
             unsat_checks=unsat_checks,
@@ -7581,7 +7937,7 @@ def grand_hw_cycles_from_result(
     # neighbour scan itself is already covered by cluster_unsat_edges above.
     if selection_mode_used in ("syndrome_vote", "sv", "receiver2"):
         cycles += _ceil_div(sv_score_len, add_pc)
-    elif selection_mode_used in ("ai_mix_roi", "aimix", "mix_roi", "receiver9_mix", "ai_window_roi", "aiwindow", "window_roi", "receiver9_window", "ai_rank_roi", "airoi", "roi_rank", "receiver9_roi", "ai_rank", "ai", "airank", "receiver9"):
+    elif selection_mode_used in ("ai_tanner_roi", "aitg", "tanner_roi", "receiver9_tg", "ai_mix_roi", "aimix", "mix_roi", "receiver9_mix", "ai_window_roi", "aiwindow", "window_roi", "receiver9_window", "ai_rank_roi", "airoi", "roi_rank", "receiver9_roi", "ai_rank", "ai", "airank", "receiver9"):
         # Weighted blend of vote, inverse-|LLR|, disagreement, density, plus lightweight block scoring.
         cycles += _ceil_div(4 * sv_score_len, add_pc)
 
@@ -8308,6 +8664,23 @@ RUN_RECEIVER9 = bool(_get_int_env("RUN_RECEIVER9", 0))
 GRAND_AIR_USE_BOOST = bool(_get_int_env("GRAND_AIR_USE_BOOST", _get_int_env("GRAND_AHR_USE_BOOST", _get_int_env("GRAND_USE_BOOST", 1))))
 GRAND_AIR_USE_FALLBACK = bool(_get_int_env("GRAND_AIR_USE_FALLBACK", 1))
 
+
+def _apply_air_tanner_knobs(cfg: ClusterGrandConfig, top_blocks_env: str, default_top_blocks: int) -> None:
+    cfg.ai_tanner_block_size = _get_int_env("GRAND_AIR_AI_TG_BLOCK_SIZE", _get_int_env("GRAND_AIR_AI_WINDOW_BLOCK_SIZE", 64))
+    cfg.ai_tanner_static_prior_weight = _get_float_env("GRAND_AIR_AI_TG_STATIC_WEIGHT", 0.30)
+    cfg.ai_tanner_message_weight = _get_float_env("GRAND_AIR_AI_TG_MESSAGE_WEIGHT", 1.00)
+    cfg.ai_tanner_cycle_weight = _get_float_env("GRAND_AIR_AI_TG_CYCLE_WEIGHT", 0.42)
+    cfg.ai_tanner_local_share_diffuse = _get_float_env("GRAND_AIR_AI_TG_LOCAL_SHARE_DIFFUSE", 0.30)
+    cfg.ai_tanner_local_share_balanced = _get_float_env("GRAND_AIR_AI_TG_LOCAL_SHARE_BALANCED", 0.48)
+    cfg.ai_tanner_local_share_compact = _get_float_env("GRAND_AIR_AI_TG_LOCAL_SHARE_COMPACT", 0.66)
+    cfg.ai_tanner_diffuse_union_size = _get_int_env("GRAND_AIR_AI_TG_DIFFUSE_UNION", 192)
+    cfg.ai_tanner_diffuse_block_concentration = _get_float_env("GRAND_AIR_AI_TG_DIFFUSE_BLOCK", 0.09)
+    cfg.ai_tanner_compact_block_concentration = _get_float_env("GRAND_AIR_AI_TG_COMPACT_BLOCK", 0.12)
+    cfg.ai_tanner_top_blocks = _get_int_env(top_blocks_env, default_top_blocks)
+    cfg.ai_tanner_neighbor_blocks = _get_int_env("GRAND_AIR_AI_TG_NEIGHBOR_BLOCKS", _get_int_env("GRAND_AIR_AI_WINDOW_NEIGHBOR_BLOCKS", 1))
+    cfg.ai_tanner_diffuse_extra_blocks = _get_int_env("GRAND_AIR_AI_TG_DIFFUSE_EXTRA_BLOCKS", 1)
+    cfg.ai_tanner_top_global_extra = _get_int_env("GRAND_AIR_AI_TG_TOP_GLOBAL_EXTRA", 10)
+
 # Tiny low-latency rescue arm: cheap shot on compact early residuals.
 grand_cfg_awgn_air_tiny = copy.deepcopy(grand_cfg_awgn_ahr)
 grand_cfg_awgn_air_tiny.selection_mode = os.environ.get("GRAND_AIR_SELECTION_MODE", "ai_rank").strip().lower() or "ai_rank"
@@ -8345,6 +8718,7 @@ grand_cfg_awgn_air_tiny.ai_window_diffuse_extra_blocks = _get_int_env("GRAND_AIR
 grand_cfg_awgn_air_tiny.ai_window_compact_single_threshold = _get_float_env("GRAND_AIR_AI_WINDOW_COMPACT_SINGLE", 0.18)
 grand_cfg_awgn_air_tiny.ai_window_block_score_conflict_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_CONFLICT_BONUS", 0.35)
 grand_cfg_awgn_air_tiny.ai_window_block_score_density_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_DENSITY_BONUS", 0.20)
+_apply_air_tanner_knobs(grand_cfg_awgn_air_tiny, "GRAND_AIR_AI_TG_TINY_TOP_BLOCKS", 1)
 
 grand_cfg_awgn_air_full = copy.deepcopy(grand_cfg_awgn_meta)
 grand_cfg_awgn_air_full.selection_mode = os.environ.get("GRAND_AIR_SELECTION_MODE", "ai_rank").strip().lower() or "ai_rank"
@@ -8377,6 +8751,7 @@ grand_cfg_awgn_air_full.ai_window_diffuse_extra_blocks = _get_int_env("GRAND_AIR
 grand_cfg_awgn_air_full.ai_window_compact_single_threshold = _get_float_env("GRAND_AIR_AI_WINDOW_COMPACT_SINGLE", 0.18)
 grand_cfg_awgn_air_full.ai_window_block_score_conflict_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_CONFLICT_BONUS", 0.35)
 grand_cfg_awgn_air_full.ai_window_block_score_density_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_DENSITY_BONUS", 0.20)
+_apply_air_tanner_knobs(grand_cfg_awgn_air_full, "GRAND_AIR_AI_TG_FULL_TOP_BLOCKS", 2)
 
 grand_cfg_awgn_air_full_boost = copy.deepcopy(grand_cfg_awgn_meta_boost)
 grand_cfg_awgn_air_full_boost.selection_mode = os.environ.get("GRAND_AIR_SELECTION_MODE", "ai_rank").strip().lower() or "ai_rank"
@@ -8402,6 +8777,7 @@ grand_cfg_awgn_air_full_boost.ai_window_diffuse_extra_blocks = _get_int_env("GRA
 grand_cfg_awgn_air_full_boost.ai_window_compact_single_threshold = _get_float_env("GRAND_AIR_AI_WINDOW_COMPACT_SINGLE", 0.18)
 grand_cfg_awgn_air_full_boost.ai_window_block_score_conflict_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_CONFLICT_BONUS", 0.35)
 grand_cfg_awgn_air_full_boost.ai_window_block_score_density_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_DENSITY_BONUS", 0.20)
+_apply_air_tanner_knobs(grand_cfg_awgn_air_full_boost, "GRAND_AIR_AI_TG_BOOST_TOP_BLOCKS", 3)
 
 grand_cfg_awgn_air_fallback = copy.deepcopy(grand_cfg_awgn_bgr)
 grand_cfg_awgn_air_fallback.selection_mode = os.environ.get("GRAND_AIR_SELECTION_MODE", "ai_rank").strip().lower() or "ai_rank"
@@ -8427,6 +8803,7 @@ grand_cfg_awgn_air_fallback.ai_window_diffuse_extra_blocks = _get_int_env("GRAND
 grand_cfg_awgn_air_fallback.ai_window_compact_single_threshold = _get_float_env("GRAND_AIR_AI_WINDOW_COMPACT_SINGLE", 0.18)
 grand_cfg_awgn_air_fallback.ai_window_block_score_conflict_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_CONFLICT_BONUS", 0.35)
 grand_cfg_awgn_air_fallback.ai_window_block_score_density_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_DENSITY_BONUS", 0.20)
+_apply_air_tanner_knobs(grand_cfg_awgn_air_fallback, "GRAND_AIR_AI_TG_META_TOP_BLOCKS", 3)
 
 grand_cfg_awgn_air_fallback_boost = copy.deepcopy(grand_cfg_awgn_bgr_boost)
 grand_cfg_awgn_air_fallback_boost.selection_mode = os.environ.get("GRAND_AIR_SELECTION_MODE", "ai_rank").strip().lower() or "ai_rank"
@@ -8452,6 +8829,7 @@ grand_cfg_awgn_air_fallback_boost.ai_window_diffuse_extra_blocks = _get_int_env(
 grand_cfg_awgn_air_fallback_boost.ai_window_compact_single_threshold = _get_float_env("GRAND_AIR_AI_WINDOW_COMPACT_SINGLE", 0.18)
 grand_cfg_awgn_air_fallback_boost.ai_window_block_score_conflict_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_CONFLICT_BONUS", 0.35)
 grand_cfg_awgn_air_fallback_boost.ai_window_block_score_density_bonus = _get_float_env("GRAND_AIR_AI_WINDOW_DENSITY_BONUS", 0.20)
+_apply_air_tanner_knobs(grand_cfg_awgn_air_fallback_boost, "GRAND_AIR_AI_TG_META_TOP_BLOCKS", 3)
 
 ai_gate_cfg_awgn_air = AIGatedHybridConfig(
     gate_snapshot_policy=os.environ.get("GRAND_AIR_GATE_SNAPSHOT", "4").strip() or "4",
@@ -8843,7 +9221,9 @@ def _resolve_grand_snapshot_schedule(stage1_iter: int) -> List[int]:
         if 0 < v <= stage1_iter:
             vals.append(v)
 
-    vals.append(stage1_iter)
+    append_final = bool(_get_int_env("GRAND_RESCUE_APPEND_FINAL", 1))
+    if append_final:
+        vals.append(stage1_iter)
     vals = sorted(set(int(v) for v in vals if 0 < int(v) <= stage1_iter))
     if not vals:
         vals = [stage1_iter]
@@ -11070,6 +11450,7 @@ def run_awgn_sweep_for_code(
                 roi_modes = ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi")
                 mix_modes = ("ai_mix_roi", "aimix", "mix_roi", "receiver9_mix")
                 window_modes = ("ai_window_roi", "aiwindow", "window_roi", "receiver9_window")
+                graph_modes = ("ai_tanner_roi", "aitg", "tanner_roi", "receiver9_tg")
                 if policy_mode in ("distilled_tree_bandit", "tree_bandit", "dt_bandit"):
                     if selection_mode in window_modes:
                         dec_name = f"hybairdtbwin{int(it)}"
@@ -11090,7 +11471,9 @@ def run_awgn_sweep_for_code(
                     else:
                         dec_name = f"hybairroi{int(it)}"
                 elif policy_mode in ("probe_moe_roi_fix", "probe_moe_roi", "probe_moe", "probe_fix", "probe"):
-                    if selection_mode in mix_modes:
+                    if selection_mode in graph_modes:
+                        dec_name = f"hybairtg{int(it)}"
+                    elif selection_mode in mix_modes:
                         dec_name = f"hybairpmix{int(it)}"
                     elif selection_mode in window_modes:
                         dec_name = f"hybairpwin{int(it)}"

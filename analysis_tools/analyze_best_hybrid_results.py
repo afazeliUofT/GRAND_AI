@@ -20,7 +20,7 @@ import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
 DecoderRow = Dict[str, str]
-HYBRID_PRIORITY = ["hybairpmix15", "hybairpfix15", "hybairpwin15", "hybairprobe15", "hybairprobefix15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
+HYBRID_PRIORITY = ["hybairtg15", "hybairpmix15", "hybairpfix15", "hybairpwin15", "hybairprobe15", "hybairprobefix15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
 
 
 def _to_float(value: object) -> float:
@@ -64,6 +64,14 @@ def _find_one(pattern: str) -> str:
 
 def _latest_log_file(repo_root: str) -> Optional[str]:
     matches = glob.glob(os.path.join(repo_root, 'run_*.out'))
+    if not matches:
+        return None
+    matches.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    return matches[0]
+
+
+def _latest_sbatch_file(repo_root: str) -> Optional[str]:
+    matches = glob.glob(os.path.join(repo_root, 'run_*.sbatch'))
     if not matches:
         return None
     matches.sort(key=lambda p: os.path.getmtime(p), reverse=True)
@@ -201,6 +209,8 @@ def main() -> int:
         print("INFO: active result is the probe-and-escalate ROI run.")
     if hybrid_name == "hybairpwin15":
         print("INFO: active result is the windowed probe-and-escalate ROI run.")
+    if hybrid_name == "hybairtg15":
+        print("INFO: active result is the Tanner-graph distilled ROI run.")
 
     log_path = _latest_log_file(repo_root)
     if log_path is not None:
@@ -213,8 +223,8 @@ def main() -> int:
         if labels and hybrid_name not in labels:
             print("WARNING: summary/log decoder mismatch. Results may be stale or renamed.")
 
-    sbatch_path = os.path.join(repo_root, 'run_best_hybrid.sbatch')
-    if os.path.isfile(sbatch_path):
+    sbatch_path = _latest_sbatch_file(repo_root)
+    if sbatch_path and os.path.isfile(sbatch_path):
         exp_dec, exp_pol, exp_sel = _extract_expected_triplet_from_sbatch(sbatch_path)
         if exp_dec or exp_pol or exp_sel:
             print(f"Current sbatch expects : decoder={exp_dec or 'n/a'} policy={exp_pol or 'n/a'} selection={exp_sel or 'n/a'}")
