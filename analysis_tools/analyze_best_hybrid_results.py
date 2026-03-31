@@ -20,7 +20,7 @@ import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
 DecoderRow = Dict[str, str]
-HYBRID_PRIORITY = ["hybairtg15", "hybairpmix15", "hybairpfix15", "hybairpwin15", "hybairprobe15", "hybairprobefix15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
+HYBRID_PRIORITY = ["hybairtgsub15", "hybairtg15", "hybairpmix15", "hybairpfix15", "hybairpwin15", "hybairprobe15", "hybairprobefix15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
 
 
 def _to_float(value: object) -> float:
@@ -70,10 +70,16 @@ def _latest_log_file(repo_root: str) -> Optional[str]:
     return matches[0]
 
 
-def _latest_sbatch_file(repo_root: str) -> Optional[str]:
+def _latest_sbatch_file(repo_root: str, log_path: Optional[str] = None) -> Optional[str]:
     matches = glob.glob(os.path.join(repo_root, 'run_*.sbatch'))
     if not matches:
         return None
+    if log_path:
+        base = os.path.basename(log_path)
+        prefix = re.sub(r'-\d+\.out$', '', base)
+        for p in matches:
+            if os.path.basename(p).replace('.sbatch', '') == prefix:
+                return p
     matches.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     return matches[0]
 
@@ -211,6 +217,8 @@ def main() -> int:
         print("INFO: active result is the windowed probe-and-escalate ROI run.")
     if hybrid_name == "hybairtg15":
         print("INFO: active result is the Tanner-graph distilled ROI run.")
+    if hybrid_name == "hybairtgsub15":
+        print("INFO: active result is the Tanner-subgraph distilled ROI run.")
 
     log_path = _latest_log_file(repo_root)
     if log_path is not None:
@@ -223,7 +231,7 @@ def main() -> int:
         if labels and hybrid_name not in labels:
             print("WARNING: summary/log decoder mismatch. Results may be stale or renamed.")
 
-    sbatch_path = _latest_sbatch_file(repo_root)
+    sbatch_path = _latest_sbatch_file(repo_root, log_path)
     if sbatch_path and os.path.isfile(sbatch_path):
         exp_dec, exp_pol, exp_sel = _extract_expected_triplet_from_sbatch(sbatch_path)
         if exp_dec or exp_pol or exp_sel:
