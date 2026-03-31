@@ -20,7 +20,7 @@ import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
 DecoderRow = Dict[str, str]
-HYBRID_PRIORITY = ["hybairtgsub15", "hybairtg15", "hybairpmix15", "hybairpfix15", "hybairpwin15", "hybairprobe15", "hybairprobefix15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
+HYBRID_PRIORITY = ["hybairtrap8", "hybairtrap10", "hybairtrap12", "hybairtrap15", "hybairtgsub15", "hybairtg15", "hybairpmix15", "hybairpfix15", "hybairpwin15", "hybairprobe15", "hybairprobefix15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
 
 
 def _to_float(value: object) -> float:
