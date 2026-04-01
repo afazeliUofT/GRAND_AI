@@ -20,7 +20,7 @@ import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
 DecoderRow = Dict[str, str]
-HYBRID_PRIORITY = ["hybairteach15", "hybairshadow15", "hybairsafe15", "hybairtrap8", "hybairtrap10", "hybairtrap12", "hybairtrap15", "hybairtgsub15", "hybairtg15", "hybairpmix15", "hybairpfix15", "hybairpwin15", "hybairprobe15", "hybairprobefix15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
+HYBRID_PRIORITY = ["hybairtd215", "hybairteach15", "hybairshadow15", "hybairsafe15", "hybairtrap8", "hybairtrap10", "hybairtrap12", "hybairtrap15", "hybairtgsub15", "hybairtg15", "hybairpmix15", "hybairpfix15", "hybairpwin15", "hybairprobe15", "hybairprobefix15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
 
 
 def _to_float(value: object) -> float:
@@ -68,6 +68,32 @@ def _latest_log_file(repo_root: str) -> Optional[str]:
         return None
     matches.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     return matches[0]
+
+
+def _latest_err_file(repo_root: str, log_path: Optional[str] = None) -> Optional[str]:
+    matches = glob.glob(os.path.join(repo_root, 'run_*.err'))
+    if not matches:
+        return None
+    if log_path:
+        base = os.path.basename(log_path)
+        twin = base[:-4] + '.err' if base.endswith('.out') else None
+        for p in matches:
+            if os.path.basename(p) == twin:
+                return p
+    matches.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    return matches[0]
+
+
+def _extract_last_error_line(path: str) -> str:
+    last = ''
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                if 'ERROR:' in line:
+                    last = line.strip()
+    except Exception:
+        return ''
+    return last
 
 
 def _latest_sbatch_file(repo_root: str, log_path: Optional[str] = None) -> Optional[str]:
@@ -201,6 +227,14 @@ def main() -> int:
         result_dir, summary_rows, diag_rows, tail_rows = _load_result_set(result_dir)
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)
+        log_path = _latest_log_file(repo_root)
+        err_path = _latest_err_file(repo_root, log_path)
+        if log_path:
+            print(f"Latest log: {os.path.basename(log_path)}", file=sys.stderr)
+        if err_path:
+            err_line = _extract_last_error_line(err_path)
+            if err_line:
+                print(err_line, file=sys.stderr)
         return 1
 
     summary_idx = _index(summary_rows)
@@ -220,6 +254,8 @@ def main() -> int:
     _print_header("Comparing decoders")
     print(f"Legacy baseline : ldpc15")
     print(f"Hybrid analyzed : {hybrid_name}")
+    if hybrid_name == "hybairtd215":
+        print("INFO: active result is the TD2 teacher-distilled graph-aware hybrid run.")
     if hybrid_name == "hybairteach15":
         print("INFO: active result is the teacher-distilled graph-aware hybrid run.")
     if hybrid_name == "hybairshadow15":

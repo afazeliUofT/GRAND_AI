@@ -4973,16 +4973,17 @@ def _select_presolver_vars(union_vars: np.ndarray,
         }
 
     selection_mode = str(getattr(cfg, "selection_mode", "llr") or "llr").strip().lower()
-    if selection_mode in ("ai_teacher_distill_roi", "aiteach", "teacher_distill_roi", "receiver9_teacher"):
+    if selection_mode in ("ai_teacher_distill_roi_v2", "aiteach2", "teacher_distill_roi_v2", "receiver9_teacher_v2",
+                          "ai_teacher_distill_roi", "aiteach", "teacher_distill_roi", "receiver9_teacher"):
         search_vars, front_end_meta = _select_search_vars_ai_teacher_distill_roi(
             union_vars=union_vars,
             unsat_checks=unsat_checks,
             code_cfg=code_cfg,
             llr_for_sort=llr_for_sort,
-            L=L,
+            L=L_peel,
             cfg=cfg,
             llr_snapshot=llr_snapshot,
-            llr_channel=getattr(frame, "llr_channel", None),
+            llr_channel=llr_channel,
         )
     elif selection_mode in ("ai_shadow_roi", "aishadow", "shadow_roi", "receiver9_shadow"):
         base_vars, meta = _select_search_vars_ai_shadow_roi(
@@ -8092,7 +8093,8 @@ def run_local_grand_on_union_of_clusters(frame: FrameLog,
     L = _auto_pick_grand_search_size(L_full, cfg)
     selection_mode = str(getattr(cfg, "selection_mode", "llr") or "llr").strip().lower()
 
-    if selection_mode in ("ai_teacher_distill_roi", "aiteach", "teacher_distill_roi", "receiver9_teacher"):
+    if selection_mode in ("ai_teacher_distill_roi_v2", "aiteach2", "teacher_distill_roi_v2", "receiver9_teacher_v2",
+                          "ai_teacher_distill_roi", "aiteach", "teacher_distill_roi", "receiver9_teacher"):
         search_vars, front_end_meta = _select_search_vars_ai_teacher_distill_roi(
             union_vars=union_vars,
             unsat_checks=unsat_checks,
@@ -13078,7 +13080,9 @@ def run_awgn_sweep_for_code(
                     else:
                         dec_name = f"hybairroi{int(it)}"
                 elif policy_mode in ("probe_moe_roi_fix", "probe_moe_roi", "probe_moe", "probe_fix", "probe"):
-                    if selection_mode in ("ai_teacher_distill_roi", "aiteach", "teacher_distill_roi", "receiver9_teacher"):
+                    if selection_mode in ("ai_teacher_distill_roi_v2", "aiteach2", "teacher_distill_roi_v2", "receiver9_teacher_v2"):
+                        dec_name = f"hybairtd2{int(it)}"
+                    elif selection_mode in ("ai_teacher_distill_roi", "aiteach", "teacher_distill_roi", "receiver9_teacher"):
                         dec_name = f"hybairteach{int(it)}"
                     elif selection_mode in ("ai_shadow_roi", "aishadow", "shadow_roi", "receiver9_shadow"):
                         dec_name = f"hybairshadow{int(it)}"

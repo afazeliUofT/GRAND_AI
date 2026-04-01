@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=run_hybair_td1_pipeline
+#SBATCH --job-name=run_hybair_td2_pipeline
 #SBATCH --account=def-rsadve
-#SBATCH --time=2:00:00
+#SBATCH --time=3:00:00
 #SBATCH --cpus-per-task=64
 #SBATCH --mem=0
 #SBATCH --output=%x-%j.out
@@ -137,7 +137,7 @@ export GRAND_AIR_GATE_SNAPSHOT=first
 export GRAND_AIR_USE_FALLBACK=0
 export GRAND_AIR_USE_BOOST=1
 export GRAND_AIR_POLICY_MODE=probe_moe_roi_fix
-export GRAND_AIR_SELECTION_MODE=ai_teacher_distill_roi
+export GRAND_AIR_SELECTION_MODE=ai_teacher_distill_roi_v2
 export GRAND_AIR_LLR_SOURCE=mixed
 export GRAND_AIR_DYNAMIC_PER_SNAPSHOT=1
 export GRAND_AIR_TINY_SNAPSHOT_CAP=2
@@ -217,12 +217,12 @@ export GRAND_AIR_PROBE_FORCE_TINY_ALL_FAILED=1
 export GRAND_AIR_PROBE_LATE_SNAPSHOT_CAP=2
 
 # Distillation controls.
-RESULTS_DIR_FINAL="results/run_hybair_td1_${SLURM_JOB_ID}"
-CALIB_DIR="$TMPDIR/hybair_td1_calib_${SLURM_JOB_ID}"
-MODEL_PATH="$RESULTS_DIR_FINAL/teacher_distill_model_td1.npz"
+RESULTS_DIR_FINAL="results/run_hybair_td2_${SLURM_JOB_ID}"
+CALIB_DIR="$TMPDIR/hybair_td2_calib_${SLURM_JOB_ID}"
+MODEL_PATH="$RESULTS_DIR_FINAL/teacher_distill_model_td2.npz"
 mkdir -p "$RESULTS_DIR_FINAL" "$CALIB_DIR"
 export GRAND_AI_DISTILL_MODEL_PATH="$MODEL_PATH"
-export GRAND_AI_DISTILL_MIN_SUCCESSES=48
+export GRAND_AI_DISTILL_MIN_SUCCESSES=24
 export GRAND_AI_DISTILL_MAX_ROWS=220000
 export GRAND_AI_DISTILL_NEG_RATIO=4.0
 export GRAND_AI_DISTILL_ITERS=520
@@ -230,14 +230,14 @@ export GRAND_AI_DISTILL_LR=0.16
 export GRAND_AI_DISTILL_REG=0.001
 export GRAND_AI_DISTILL_VERBOSE=1
 
-export EXPECTED_HYBRID_DECODER=hybairteach15
+export EXPECTED_HYBRID_DECODER=hybairtd215
 export EXPECTED_HYBRID_POLICY=probe_moe_roi_fix
-export EXPECTED_HYBRID_SELECTION=ai_teacher_distill_roi
+export EXPECTED_HYBRID_SELECTION=ai_teacher_distill_roi_v2
 
 run_phase() {
   local phase_name="$1"
-  echo "[TD1] starting phase=${phase_name} RESULTS_DIR=${RESULTS_DIR} SNR_SWEEP=${SNR_SWEEP} MODEL=${GRAND_AI_DISTILL_MODEL_PATH}"
-  python -u HW3_GRAND_AI_TD1.py "$RESULTS_DIR" sionna5g \
+  echo "[TD2] starting phase=${phase_name} RESULTS_DIR=${RESULTS_DIR} SNR_SWEEP=${SNR_SWEEP} MODEL=${GRAND_AI_DISTILL_MODEL_PATH}"
+  python -u HW3_GRAND_AI_TD2.py "$RESULTS_DIR" sionna5g \
     2> >(grep -vE 'oneDNN custom operations are on|Unable to register cuFFT factory|All log messages before absl::InitializeLog|Unable to register cuDNN factory|Unable to register cuBLAS factory|computation placer already registered' >&2)
 }
 
@@ -245,8 +245,8 @@ run_phase() {
 export RUN_RECEIVER1=0
 export RESULTS_DIR="$CALIB_DIR"
 export SNR_SWEEP="${CALIB_SNR_SWEEP:-10.0,10.5,11.0,11.5,12.0}"
-export TARGET_FRAME_ERRORS="${CALIB_TARGET_FRAME_ERRORS:-180}"
-export MAX_FRAMES="${CALIB_MAX_FRAMES:-120000}"
+export TARGET_FRAME_ERRORS="${CALIB_TARGET_FRAME_ERRORS:-220}"
+export MAX_FRAMES="${CALIB_MAX_FRAMES:-160000}"
 export GRAND_RESCUE_SNAPSHOT_ITERS=4,8,12
 export GRAND_RESCUE_APPEND_FINAL=0
 export GRAND_AIR_TINY_MAX_PATTERNS=12000
@@ -267,7 +267,7 @@ export GRAND_AI_DISTILL_LOAD=0
 run_phase calibration
 
 if [[ ! -f "$MODEL_PATH" ]]; then
-  echo "ERROR: teacher-distill model was not created at $MODEL_PATH" >&2
+  echo "ERROR: teacher-distill model was not created at $MODEL_PATH" | tee "$RESULTS_DIR_FINAL/TD2_FAILURE.txt" >&2
   exit 3
 fi
 rm -rf "$CALIB_DIR"
@@ -275,14 +275,14 @@ rm -rf "$CALIB_DIR"
 # ---------------- Evaluation phase ----------------
 export RUN_RECEIVER1=1
 export RESULTS_DIR="$RESULTS_DIR_FINAL"
-export SNR_SWEEP="${EVAL_SNR_SWEEP:-9.5,10.0,10.5,11.0,11.5,12.0,12.5}"
-export TARGET_FRAME_ERRORS="${TARGET_FRAME_ERRORS:-120}"
-export MAX_FRAMES="${MAX_FRAMES:-220000}"
-export GRAND_RESCUE_SNAPSHOT_ITERS=4,8
+export SNR_SWEEP="${EVAL_SNR_SWEEP:-10.0,10.5,11.0,11.5,12.0,12.5}"
+export TARGET_FRAME_ERRORS="${TARGET_FRAME_ERRORS:-140}"
+export MAX_FRAMES="${MAX_FRAMES:-200000}"
+export GRAND_RESCUE_SNAPSHOT_ITERS=4,8,12
 export GRAND_RESCUE_APPEND_FINAL=0
 export GRAND_AIR_TINY_MAX_PATTERNS=7000
-export GRAND_AIR_MAX_PATTERNS=60000
-export GRAND_AIR_BOOST_MAX_PATTERNS=90000
+export GRAND_AIR_MAX_PATTERNS=50000
+export GRAND_AIR_BOOST_MAX_PATTERNS=70000
 export GRAND_AIR_TINY_RESTART_MAX_CANDIDATES=4
 export GRAND_AIR_TINY_RESTART_ITERS=4
 export GRAND_AIR_RESTART_MAX_CANDIDATES=8
