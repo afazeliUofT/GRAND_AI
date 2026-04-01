@@ -1,0 +1,214 @@
+{
+  "errors": {},
+  "python": "/scratch/rsadve1/venvs/grand5g/bin/python",
+  "status": {
+    "LDPC5GEncoder_ok": true,
+    "TDL_ok": true,
+    "pyparsing_ok": true,
+    "sionna_ok": true,
+    "six_ok": true
+  }
+}
+[SBATCH CONFIG] SNR_SWEEP=9.5,10.0,10.5,11.0,11.5,12.0,12.5
+[SBATCH CONFIG] LDPC_ITERS=15 STAGE1_ITERS=15
+[SBATCH CONFIG] CHANNEL=SIONNA_TDL TDL=A DELAY=1.0e-7 SPEED=[0.5,2.0] CFO=20.0 CSI_MODE=block_ls
+[SBATCH CONFIG] RUN_RECEIVER9=1 SNAPSHOTS=4,8 APPEND_FINAL=0 GATE=first policy=probe_moe_roi_fix selection=ai_shadow_roi expected=hybairshadow15 dynamic=1 tiny/full/meta caps=2/2/0
+Numba threads: 64
+[HW model]  {'fclk_mhz': 800, 'ldpc_edges_per_cycle': 64, 'ldpc_bits_per_cycle_hd': 64, 'ldpc_iter_overhead_cycles': 20, 'grand_edges_per_cycle': 64, 'grand_checks_per_cycle': 64, 'grand_batch_overhead_cycles': 200, 'grand_abs_per_cycle': 64, 'grand_sort_elem_log2_per_cycle': 64, 'grand_cost_add_per_cycle': 64, 'grand_patsort_patlog2_per_cycle': 64, 'cluster_pair_edges_per_cycle': 0}
+[RUN_EXPERIMENTS] codes=['sionna5g']  snr_sweep=[9.5, 10.0, 10.5, 11.0, 11.5, 12.0, 12.5]  out_dir=results/run_hybair_shadow1_30846484
+[RUN_EXPERIMENTS] mc_cfg=AdaptiveMCConfig(target_frame_errors=120, min_frames=0, max_frames=220000)
+Fast decoding structures prepared: 20488 edges
+[RUN_EXPERIMENTS] Built code: sionna5g_k1024_n2048_qm1
+[run_awgn_sweep_for_code] SNR-parallel ON: n_jobs=4, threads/worker=16, backend=loky
+[save_awgn_results] Wrote raw results : results/run_hybair_shadow1_30846484/sionna_tdl_sionna5g_k1024_n2048_qm1_hybrid_20260331-172339_raw.pkl
+[save_awgn_results] Wrote mean summary: results/run_hybair_shadow1_30846484/sionna_tdl_sionna5g_k1024_n2048_qm1_hybrid_20260331-172339_summary.csv
+[save_awgn_results] Wrote tails summary: results/run_hybair_shadow1_30846484/sionna_tdl_sionna5g_k1024_n2048_qm1_hybrid_20260331-172339_summary_tails.csv
+
+=== Adaptive LDPC-only Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : ldpc15
+SNR (dB)                      : 10.50
+Frames simulated              : 3296
+Frame errors                  : 120 (target=120)
+Bit error rate (BER)          : 9.642e-03
+Frame error rate (FER)        : 3.641e-02
+Avg LDPC iterations/frame     : 4.58
+Avg HW cycles/frame           : 6373.86
+Avg HW decode time/frame      : 7.97 µs
+HW model (fclk_mhz)            : 800.0 MHz
+[VERIFY] Receiver9 decoder=hybairshadow15 policy=probe_moe_roi_fix selection=ai_shadow_roi snapshots=[4, 8]
+
+=== Adaptive HYBRID Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : hybairshadow15
+SNR (dB)                      : 10.50
+Frames simulated              : 3296
+Final frame errors            : 120 (target=120)
+Stage-1 BER                   : 9.642e-03
+Stage-1 FER                   : 3.641e-02
+Final BER (LDPC+GRAND)        : 9.642e-03
+Final FER (LDPC+GRAND)        : 3.641e-02
+Avg stage-1 iters/frame       : 4.58
+Avg HW time/frame (stage-1)   : 7.97 µs
+Avg HW time/frame (GRAND)     : 18.01 µs
+Avg HW time/frame (total)     : 25.98 µs
+
+=== Adaptive LDPC-only Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : ldpc15
+SNR (dB)                      : 9.50
+Frames simulated              : 2139
+Frame errors                  : 120 (target=120)
+Bit error rate (BER)          : 1.497e-02
+Frame error rate (FER)        : 5.610e-02
+Avg LDPC iterations/frame     : 5.01
+Avg HW cycles/frame           : 6970.80
+Avg HW decode time/frame      : 8.71 µs
+HW model (fclk_mhz)            : 800.0 MHz
+[VERIFY] Receiver9 decoder=hybairshadow15 policy=probe_moe_roi_fix selection=ai_shadow_roi snapshots=[4, 8]
+
+=== Adaptive HYBRID Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : hybairshadow15
+SNR (dB)                      : 9.50
+Frames simulated              : 2139
+Final frame errors            : 120 (target=120)
+Stage-1 BER                   : 1.497e-02
+Stage-1 FER                   : 5.610e-02
+Final BER (LDPC+GRAND)        : 1.497e-02
+Final FER (LDPC+GRAND)        : 5.610e-02
+Avg stage-1 iters/frame       : 5.01
+Avg HW time/frame (stage-1)   : 8.71 µs
+Avg HW time/frame (GRAND)     : 3.85 µs
+Avg HW time/frame (total)     : 12.56 µs
+
+=== Adaptive LDPC-only Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : ldpc15
+SNR (dB)                      : 11.50
+Frames simulated              : 5018
+Frame errors                  : 120 (target=120)
+Bit error rate (BER)          : 5.933e-03
+Frame error rate (FER)        : 2.391e-02
+Avg LDPC iterations/frame     : 4.19
+Avg HW cycles/frame           : 5826.36
+Avg HW decode time/frame      : 7.28 µs
+HW model (fclk_mhz)            : 800.0 MHz
+[VERIFY] Receiver9 decoder=hybairshadow15 policy=probe_moe_roi_fix selection=ai_shadow_roi snapshots=[4, 8]
+
+=== Adaptive HYBRID Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : hybairshadow15
+SNR (dB)                      : 11.50
+Frames simulated              : 5018
+Final frame errors            : 120 (target=120)
+Stage-1 BER                   : 5.933e-03
+Stage-1 FER                   : 2.391e-02
+Final BER (LDPC+GRAND)        : 5.933e-03
+Final FER (LDPC+GRAND)        : 2.391e-02
+Avg stage-1 iters/frame       : 4.19
+Avg HW time/frame (stage-1)   : 7.28 µs
+Avg HW time/frame (GRAND)     : 11.73 µs
+Avg HW time/frame (total)     : 19.01 µs
+
+=== Adaptive LDPC-only Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : ldpc15
+SNR (dB)                      : 10.00
+Frames simulated              : 2399
+Frame errors                  : 120 (target=120)
+Bit error rate (BER)          : 1.330e-02
+Frame error rate (FER)        : 5.002e-02
+Avg LDPC iterations/frame     : 4.78
+Avg HW cycles/frame           : 6654.19
+Avg HW decode time/frame      : 8.32 µs
+HW model (fclk_mhz)            : 800.0 MHz
+[VERIFY] Receiver9 decoder=hybairshadow15 policy=probe_moe_roi_fix selection=ai_shadow_roi snapshots=[4, 8]
+
+=== Adaptive HYBRID Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : hybairshadow15
+SNR (dB)                      : 10.00
+Frames simulated              : 2399
+Final frame errors            : 120 (target=120)
+Stage-1 BER                   : 1.330e-02
+Stage-1 FER                   : 5.002e-02
+Final BER (LDPC+GRAND)        : 1.330e-02
+Final FER (LDPC+GRAND)        : 5.002e-02
+Avg stage-1 iters/frame       : 4.78
+Avg HW time/frame (stage-1)   : 8.32 µs
+Avg HW time/frame (GRAND)     : 19.17 µs
+Avg HW time/frame (total)     : 27.49 µs
+
+=== Adaptive LDPC-only Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : ldpc15
+SNR (dB)                      : 12.00
+Frames simulated              : 6415
+Frame errors                  : 120 (target=120)
+Bit error rate (BER)          : 5.139e-03
+Frame error rate (FER)        : 1.871e-02
+Avg LDPC iterations/frame     : 4.04
+Avg HW cycles/frame           : 5620.25
+Avg HW decode time/frame      : 7.03 µs
+HW model (fclk_mhz)            : 800.0 MHz
+[VERIFY] Receiver9 decoder=hybairshadow15 policy=probe_moe_roi_fix selection=ai_shadow_roi snapshots=[4, 8]
+
+=== Adaptive HYBRID Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : hybairshadow15
+SNR (dB)                      : 12.00
+Frames simulated              : 6415
+Final frame errors            : 120 (target=120)
+Stage-1 BER                   : 5.139e-03
+Stage-1 FER                   : 1.871e-02
+Final BER (LDPC+GRAND)        : 5.139e-03
+Final FER (LDPC+GRAND)        : 1.871e-02
+Avg stage-1 iters/frame       : 4.04
+Avg HW time/frame (stage-1)   : 7.03 µs
+Avg HW time/frame (GRAND)     : 9.55 µs
+Avg HW time/frame (total)     : 16.58 µs
+
+=== Adaptive LDPC-only Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : ldpc15
+SNR (dB)                      : 11.00
+Frames simulated              : 3954
+Frame errors                  : 120 (target=120)
+Bit error rate (BER)          : 8.311e-03
+Frame error rate (FER)        : 3.035e-02
+Avg LDPC iterations/frame     : 4.39
+Avg HW cycles/frame           : 6103.92
+Avg HW decode time/frame      : 7.63 µs
+HW model (fclk_mhz)            : 800.0 MHz
+[VERIFY] Receiver9 decoder=hybairshadow15 policy=probe_moe_roi_fix selection=ai_shadow_roi snapshots=[4, 8]
+
+=== Adaptive HYBRID Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : hybairshadow15
+SNR (dB)                      : 11.00
+Frames simulated              : 3954
+Final frame errors            : 120 (target=120)
+Stage-1 BER                   : 8.311e-03
+Stage-1 FER                   : 3.035e-02
+Final BER (LDPC+GRAND)        : 8.311e-03
+Final FER (LDPC+GRAND)        : 3.035e-02
+Avg stage-1 iters/frame       : 4.39
+Avg HW time/frame (stage-1)   : 7.63 µs
+Avg HW time/frame (GRAND)     : 14.91 µs
+Avg HW time/frame (total)     : 22.54 µs
+
+=== Adaptive LDPC-only Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : ldpc15
+SNR (dB)                      : 12.50
+Frames simulated              : 8315
+Frame errors                  : 120 (target=120)
+Bit error rate (BER)          : 3.850e-03
+Frame error rate (FER)        : 1.443e-02
+Avg LDPC iterations/frame     : 3.91
+Avg HW cycles/frame           : 5434.18
+Avg HW decode time/frame      : 6.79 µs
+HW model (fclk_mhz)            : 800.0 MHz
+[VERIFY] Receiver9 decoder=hybairshadow15 policy=probe_moe_roi_fix selection=ai_shadow_roi snapshots=[4, 8]
+
+=== Adaptive HYBRID Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : hybairshadow15
+SNR (dB)                      : 12.50
+Frames simulated              : 8315
+Final frame errors            : 120 (target=120)
+Stage-1 BER                   : 3.850e-03
+Stage-1 FER                   : 1.443e-02
+Final BER (LDPC+GRAND)        : 3.850e-03
+Final FER (LDPC+GRAND)        : 1.443e-02
+Avg stage-1 iters/frame       : 3.91
+Avg HW time/frame (stage-1)   : 6.79 µs
+Avg HW time/frame (GRAND)     : 7.19 µs
+Avg HW time/frame (total)     : 13.98 µs

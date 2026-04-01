@@ -4259,6 +4259,207 @@ def _select_search_vars_ai_dual_safe_roi(union_vars: np.ndarray,
     })
     return np.asarray(selected[:L], dtype=np.int32), meta
 
+def _select_search_vars_ai_shadow_roi(union_vars: np.ndarray,
+                                       unsat_checks: np.ndarray,
+                                       code_cfg: CodeConfig,
+                                       llr_for_sort: np.ndarray,
+                                       L: int,
+                                       cfg: ClusterGrandConfig,
+                                       llr_snapshot: Optional[np.ndarray] = None,
+                                       llr_channel: Optional[np.ndarray] = None,
+                                       frame: Optional[FrameLog] = None,
+                                       snapshot_iter: Optional[int] = None) -> Tuple[np.ndarray, Dict[str, int]]:
+    """Shadow rescue selector: final-failure aware fusion of early snapshots.
+
+    Runtime idea:
+      1) finish full LDPC stage-1,
+      2) if it still fails, revisit earlier snapshots,
+      3) fuse a global mix expert, a Tanner trap expert, and a tiny temporal
+         stability score built from the saved LDPC snapshot trajectory.
+    """
+    union_vars = np.asarray(union_vars, dtype=np.int32)
+    unsat_checks = np.asarray(unsat_checks, dtype=np.int32)
+    L = int(max(L, 0))
+    if L <= 0 or union_vars.size == 0:
+        return np.array([], dtype=np.int32), {
+            "selection_mode_used": "ai_shadow_roi",
+            "shadow_profile": "empty",
+            "shadow_prefilter": 0,
+            "shadow_mix_budget": 0,
+            "shadow_trap_budget": 0,
+            "shadow_temporal_weight": 0.0,
+            "shadow_history_len": 0,
+        }
+
+    block_size = max(1, int(getattr(cfg, "ai_roi_block_size", 64) or 64))
+    block_conc = _ai_rank_roi_block_concentration(union_vars, block_size)
+    union_size = int(union_vars.size)
+    diffuse = (
+        float(union_size) >= float(int(getattr(cfg, "ai_roi_diffuse_union_size", 224) or 224))
+        and float(block_conc) <= float(getattr(cfg, "ai_roi_diffuse_block_concentration", 0.08) or 0.08)
+    )
+    compact = float(block_conc) >= float(getattr(cfg, "ai_roi_compact_block_concentration", 0.10) or 0.10)
+
+    pre_cap = int(min(union_vars.size, max(L + 32, 3 * L, int(round(2.8 * max(L, 1))))))
+    mix_vars, mix_meta = _select_search_vars_ai_mix_roi(
+        union_vars=union_vars,
+        unsat_checks=unsat_checks,
+        code_cfg=code_cfg,
+        llr_for_sort=llr_for_sort,
+        L=pre_cap,
+        cfg=cfg,
+        llr_snapshot=llr_snapshot,
+        llr_channel=llr_channel,
+    )
+    trap_vars, trap_meta = _select_search_vars_ai_tanner_trap_roi(
+        union_vars=union_vars,
+        unsat_checks=unsat_checks,
+        code_cfg=code_cfg,
+        llr_for_sort=llr_for_sort,
+        L=pre_cap,
+        cfg=cfg,
+        llr_snapshot=llr_snapshot,
+        llr_channel=llr_channel,
+    )
+
+    mix_rank = {int(v): i for i, v in enumerate(np.asarray(mix_vars, dtype=np.int32).tolist())}
+    trap_rank = {int(v): i for i, v in enumerate(np.asarray(trap_vars, dtype=np.int32).tolist())}
+
+    temporal_scores = np.zeros(union_vars.size, dtype=np.float64)
+    hist_len = 0
+    if frame is not None and isinstance(getattr(frame, "snapshots", None), dict):
+        llr_hist = frame.snapshots.get("llr", {})
+        syn_hist = frame.snapshots.get("syndrome", {})
+        if isinstance(llr_hist, dict) and llr_hist:
+            hist_keys = sorted(int(k) for k in llr_hist.keys())
+            if hist_keys:
+                hist_len = int(len(hist_keys))
+                if llr_channel is not None:
+                    llr_channel = np.asarray(llr_channel, dtype=np.float32)
+                    chan_sign = np.sign(llr_channel).astype(np.int8, copy=False)
+                else:
+                    chan_sign = np.zeros(int(code_cfg.N), dtype=np.int8)
+                vars_to_checks = code_cfg.vars_to_checks
+                weak_abs = float(getattr(cfg, "ai_rank_roi_weak_abs_threshold", 2.5) or 2.5)
+                for idx, v in enumerate(union_vars.tolist()):
+                    llr_vals = []
+                    sign_vals = []
+                    weak_hits = 0
+                    chan_disagree = 0
+                    unsat_touch = 0
+                    v_int = int(v)
+                    checks_v = [int(c) for c in vars_to_checks[v_int]]
+                    for hk in hist_keys:
+                        llr_vec = llr_hist.get(hk)
+                        if llr_vec is None:
+                            continue
+                        lv = float(np.asarray(llr_vec, dtype=np.float32)[v_int])
+                        llr_vals.append(abs(lv))
+                        s = int(np.sign(lv))
+                        if s == 0:
+                            s = int(chan_sign[v_int]) if chan_sign.size else 0
+                        sign_vals.append(s)
+                        if abs(lv) <= weak_abs:
+                            weak_hits += 1
+                        if chan_sign.size and s != 0 and int(chan_sign[v_int]) != 0 and s != int(chan_sign[v_int]):
+                            chan_disagree += 1
+                        syn_k = syn_hist.get(hk)
+                        if syn_k is not None:
+                            syn_vec = np.asarray(syn_k, dtype=np.uint8)
+                            touched = False
+                            for c in checks_v:
+                                if c < syn_vec.size and syn_vec[c] != 0:
+                                    touched = True
+                                    break
+                            if touched:
+                                unsat_touch += 1
+                    if not llr_vals:
+                        continue
+                    n_hist = max(1, len(llr_vals))
+                    sign_flips = 0
+                    valid_pairs = 0
+                    for a, b in zip(sign_vals[:-1], sign_vals[1:]):
+                        if a != 0 and b != 0:
+                            valid_pairs += 1
+                            if a != b:
+                                sign_flips += 1
+                    flip_rate = float(sign_flips) / float(max(1, valid_pairs))
+                    weak_rate = float(weak_hits) / float(n_hist)
+                    disagree_rate = float(chan_disagree) / float(n_hist)
+                    unsat_rate = float(unsat_touch) / float(n_hist)
+                    min_abs = float(min(llr_vals))
+                    final_abs = float(llr_vals[-1])
+                    temporal_scores[idx] = (
+                        0.65 * (1.0 / (min_abs + 0.35))
+                        + 0.90 * flip_rate
+                        + 0.70 * weak_rate
+                        + 0.60 * disagree_rate
+                        + 0.55 * unsat_rate
+                        + 0.25 * (1.0 / (final_abs + 0.35))
+                    )
+
+    if np.any(temporal_scores > 0.0):
+        t_min = float(np.min(temporal_scores))
+        t_max = float(np.max(temporal_scores))
+        if t_max > t_min:
+            temporal_scores = (temporal_scores - t_min) / float(t_max - t_min)
+        else:
+            temporal_scores[:] = 0.0
+
+    if compact:
+        w_mix, w_trap, w_temp = 0.24, 0.46, 0.30
+        profile = "compact_shadow"
+    elif diffuse:
+        w_mix, w_trap, w_temp = 0.44, 0.22, 0.34
+        profile = "diffuse_shadow"
+    else:
+        w_mix, w_trap, w_temp = 0.34, 0.28, 0.38
+        profile = "balanced_shadow"
+
+    default_rank = float(pre_cap + 8)
+    fused_scores: List[Tuple[float, int]] = []
+    for idx, v in enumerate(union_vars.tolist()):
+        v_int = int(v)
+        mix_score = 1.0 - min(float(mix_rank.get(v_int, int(default_rank))), default_rank) / default_rank
+        trap_score = 1.0 - min(float(trap_rank.get(v_int, int(default_rank))), default_rank) / default_rank
+        temp_score = float(temporal_scores[idx]) if temporal_scores.size else 0.0
+        fused = float(w_mix * mix_score + w_trap * trap_score + w_temp * temp_score)
+        if llr_channel is not None:
+            ch_abs = float(abs(np.asarray(llr_channel, dtype=np.float32)[v_int]))
+            fused += float(0.12 / (ch_abs + 0.35))
+        fused_scores.append((fused, v_int))
+
+    fused_scores.sort(key=lambda x: (-x[0], x[1]))
+    selected = [v for _s, v in fused_scores[:L]]
+
+    if len(selected) < L:
+        seen = set(int(v) for v in selected)
+        for seq in (np.asarray(trap_vars, dtype=np.int32).tolist(), np.asarray(mix_vars, dtype=np.int32).tolist(), union_vars.tolist()):
+            for v in seq:
+                vi = int(v)
+                if vi not in seen:
+                    selected.append(vi)
+                    seen.add(vi)
+                    if len(selected) >= L:
+                        break
+            if len(selected) >= L:
+                break
+
+    meta = dict(mix_meta)
+    meta.update({
+        "selection_mode_used": "ai_shadow_roi",
+        "shadow_profile": str(profile),
+        "shadow_prefilter": int(pre_cap),
+        "shadow_mix_budget": int(len(mix_rank)),
+        "shadow_trap_budget": int(len(trap_rank)),
+        "shadow_temporal_weight": float(w_temp),
+        "shadow_history_len": int(hist_len),
+        "shadow_temporal_mean": float(np.mean(temporal_scores)) if temporal_scores.size else 0.0,
+        "shadow_temporal_max": float(np.max(temporal_scores)) if temporal_scores.size else 0.0,
+    })
+    return np.asarray(selected[:L], dtype=np.int32), meta
+
+
 def _resolve_sort_llr_vector(llr_snapshot: np.ndarray,
                              llr_channel: Optional[np.ndarray],
                              cfg: ClusterGrandConfig) -> Tuple[np.ndarray, str]:
@@ -4350,7 +4551,20 @@ def _select_presolver_vars(union_vars: np.ndarray,
         }
 
     selection_mode = str(getattr(cfg, "selection_mode", "llr") or "llr").strip().lower()
-    if selection_mode in ("ai_dual_safe_roi", "aidualsafe", "dual_safe_roi", "receiver9_safe"):
+    if selection_mode in ("ai_shadow_roi", "aishadow", "shadow_roi", "receiver9_shadow"):
+        base_vars, meta = _select_search_vars_ai_shadow_roi(
+            union_vars=union_vars,
+            unsat_checks=unsat_checks,
+            code_cfg=code_cfg,
+            llr_for_sort=llr_for_sort,
+            L=L_peel,
+            cfg=cfg,
+            llr_snapshot=llr_snapshot,
+            llr_channel=llr_channel,
+            frame=None,
+            snapshot_iter=None,
+        )
+    elif selection_mode in ("ai_dual_safe_roi", "aidualsafe", "dual_safe_roi", "receiver9_safe"):
         base_vars, meta = _select_search_vars_ai_dual_safe_roi(
             union_vars=union_vars,
             unsat_checks=unsat_checks,
@@ -7445,7 +7659,20 @@ def run_local_grand_on_union_of_clusters(frame: FrameLog,
     L = _auto_pick_grand_search_size(L_full, cfg)
     selection_mode = str(getattr(cfg, "selection_mode", "llr") or "llr").strip().lower()
 
-    if selection_mode in ("ai_tanner_trap_roi", "aitg3", "tanner_trap_roi", "receiver9_tg3"):
+    if selection_mode in ("ai_shadow_roi", "aishadow", "shadow_roi", "receiver9_shadow"):
+        search_vars, front_end_meta = _select_search_vars_ai_shadow_roi(
+            union_vars=union_vars,
+            unsat_checks=unsat_checks,
+            code_cfg=code_cfg,
+            llr_for_sort=llr_for_sort,
+            L=L,
+            cfg=cfg,
+            llr_snapshot=llr_snapshot,
+            llr_channel=getattr(frame, "llr_channel", None),
+            frame=frame,
+            snapshot_iter=snapshot_iter,
+        )
+    elif selection_mode in ("ai_tanner_trap_roi", "aitg3", "tanner_trap_roi", "receiver9_tg3"):
         search_vars, front_end_meta = _select_search_vars_ai_tanner_trap_roi(
             union_vars=union_vars,
             unsat_checks=unsat_checks,
@@ -8695,7 +8922,7 @@ def grand_hw_cycles_from_result(
     # neighbour scan itself is already covered by cluster_unsat_edges above.
     if selection_mode_used in ("syndrome_vote", "sv", "receiver2"):
         cycles += _ceil_div(sv_score_len, add_pc)
-    elif selection_mode_used in ("ai_dual_safe_roi", "aidualsafe", "dual_safe_roi", "receiver9_safe", "ai_tanner_trap_roi", "aitg3", "tanner_trap_roi", "receiver9_tg3", "ai_tanner_subgraph_roi", "aitg2", "tanner_subgraph_roi", "receiver9_tg2", "ai_tanner_roi", "aitg", "tanner_roi", "receiver9_tg", "ai_mix_roi", "aimix", "mix_roi", "receiver9_mix", "ai_window_roi", "aiwindow", "window_roi", "receiver9_window", "ai_rank_roi", "airoi", "roi_rank", "receiver9_roi", "ai_rank", "ai", "airank", "receiver9"):
+    elif selection_mode_used in ("ai_shadow_roi", "aishadow", "shadow_roi", "receiver9_shadow", "ai_dual_safe_roi", "aidualsafe", "dual_safe_roi", "receiver9_safe", "ai_tanner_trap_roi", "aitg3", "tanner_trap_roi", "receiver9_tg3", "ai_tanner_subgraph_roi", "aitg2", "tanner_subgraph_roi", "receiver9_tg2", "ai_tanner_roi", "aitg", "tanner_roi", "receiver9_tg", "ai_mix_roi", "aimix", "mix_roi", "receiver9_mix", "ai_window_roi", "aiwindow", "window_roi", "receiver9_window", "ai_rank_roi", "airoi", "roi_rank", "receiver9_roi", "ai_rank", "ai", "airank", "receiver9"):
         # Weighted blend of vote, inverse-|LLR|, disagreement, density, plus lightweight block scoring.
         cycles += _ceil_div(4 * sv_score_len, add_pc)
 
@@ -10096,39 +10323,67 @@ def _stage2_safe_accept_success(frame: FrameLog,
         return True, {"safe_accept_enabled": 0.0}
 
     llr_channel = getattr(frame, "llr_channel", None)
-    hard_snaps = getattr(frame, "snapshots", {}).get("hard_bits", {}) if getattr(frame, "snapshots", None) is not None else {}
+    snaps = getattr(frame, "snapshots", None) if getattr(frame, "snapshots", None) is not None else {}
+    hard_snaps = snaps.get("hard_bits", {}) if isinstance(snaps, dict) else {}
+    syn_snaps = snaps.get("syndrome", {}) if isinstance(snaps, dict) else {}
     snap_i = int(getattr(res, "snapshot_iter_used", 0) or 0)
-    base_bits = hard_snaps.get(snap_i)
-    if llr_channel is None or base_bits is None:
+    cand_base_bits = hard_snaps.get(snap_i)
+    if llr_channel is None or cand_base_bits is None:
         return True, {"safe_accept_enabled": 1.0, "safe_accept_missing_context": 1.0}
 
+    ref_mode = str(os.environ.get("GRAND_AIR_SAFE_ACCEPT_REFERENCE", "snapshot") or "snapshot").strip().lower()
+    ref_bits = cand_base_bits
+    ref_syn_w = int(getattr(res, "initial_syndrome_weight", 0) or 0)
+    ref_iter = int(snap_i)
+    if ref_mode in ("stage1_final", "final_stage1", "final", "ldpc_final", "baseline_final") and hard_snaps:
+        try:
+            ref_iter = max(int(k) for k in hard_snaps.keys())
+            ref_bits = hard_snaps.get(ref_iter, cand_base_bits)
+            syn_ref = syn_snaps.get(ref_iter, None)
+            if syn_ref is not None:
+                ref_syn_w = int(np.asarray(syn_ref, dtype=np.uint8).sum())
+        except Exception:
+            ref_bits = cand_base_bits
+            ref_syn_w = int(getattr(res, "initial_syndrome_weight", 0) or 0)
+            ref_iter = int(snap_i)
+
     llr_channel = np.asarray(llr_channel, dtype=np.float32)
-    base_bits = np.asarray(base_bits, dtype=np.uint8).copy()
-    cand_bits = base_bits.copy()
+    cand_base_bits = np.asarray(cand_base_bits, dtype=np.uint8).copy()
+    ref_bits = np.asarray(ref_bits, dtype=np.uint8).copy()
+    cand_bits = cand_base_bits.copy()
     flipped = np.asarray(getattr(res, "flipped_vars", np.array([], dtype=np.int32)), dtype=np.int32)
     if flipped.size > 0:
         cand_bits[flipped] ^= np.uint8(1)
 
-    base_cost = _weighted_llr_mismatch_cost(base_bits, llr_channel)
+    ref_cost = _weighted_llr_mismatch_cost(ref_bits, llr_channel)
     cand_cost = _weighted_llr_mismatch_cost(cand_bits, llr_channel)
     hard_chan = (llr_channel < 0.0).astype(np.uint8, copy=False)
     strong_abs = float(os.environ.get("GRAND_AIR_SAFE_ACCEPT_STRONG_ABS", "5.0") or "5.0")
     slack = float(os.environ.get("GRAND_AIR_SAFE_ACCEPT_COST_SLACK", "0.75") or "0.75")
     max_strong_wrong = int(os.environ.get("GRAND_AIR_SAFE_ACCEPT_MAX_STRONG_WRONG", "0") or "0")
+    syn_lambda = float(os.environ.get("GRAND_AIR_SAFE_ACCEPT_SYNDROME_LAMBDA", "0.0") or "0.0")
 
     if flipped.size > 0:
         strong_wrong = int(np.sum((np.abs(llr_channel[flipped]) >= strong_abs) & (cand_bits[flipped] != hard_chan[flipped])))
     else:
         strong_wrong = 0
 
-    accept = bool((cand_cost <= (base_cost + slack)) and (strong_wrong <= max_strong_wrong))
+    ref_total = float(ref_cost + syn_lambda * max(0, ref_syn_w))
+    cand_total = float(cand_cost)
+    accept = bool((cand_total <= (ref_total + slack)) and (strong_wrong <= max_strong_wrong))
     return accept, {
         "safe_accept_enabled": 1.0,
-        "safe_accept_base_cost": float(base_cost),
+        "safe_accept_reference_mode": str(ref_mode),
+        "safe_accept_reference_iter": float(ref_iter),
+        "safe_accept_reference_syndrome_w": float(ref_syn_w),
+        "safe_accept_reference_cost": float(ref_cost),
         "safe_accept_candidate_cost": float(cand_cost),
-        "safe_accept_cost_delta": float(cand_cost - base_cost),
+        "safe_accept_reference_total": float(ref_total),
+        "safe_accept_candidate_total": float(cand_total),
+        "safe_accept_total_delta": float(cand_total - ref_total),
         "safe_accept_strong_wrong": float(strong_wrong),
         "safe_accept_slack": float(slack),
+        "safe_accept_syndrome_lambda": float(syn_lambda),
         "safe_accept_accept": 1.0 if accept else 0.0,
     }
 
@@ -12332,7 +12587,7 @@ def run_awgn_sweep_for_code(
                 roi_modes = ("ai_rank_roi", "airoi", "roi_rank", "receiver9_roi")
                 mix_modes = ("ai_mix_roi", "aimix", "mix_roi", "receiver9_mix")
                 window_modes = ("ai_window_roi", "aiwindow", "window_roi", "receiver9_window")
-                graph_modes = ("ai_dual_safe_roi", "aidualsafe", "dual_safe_roi", "receiver9_safe", "ai_tanner_trap_roi", "aitg3", "tanner_trap_roi", "receiver9_tg3", "ai_tanner_subgraph_roi", "aitg2", "tanner_subgraph_roi", "receiver9_tg2", "ai_tanner_roi", "aitg", "tanner_roi", "receiver9_tg")
+                graph_modes = ("ai_shadow_roi", "aishadow", "shadow_roi", "receiver9_shadow", "ai_dual_safe_roi", "aidualsafe", "dual_safe_roi", "receiver9_safe", "ai_tanner_trap_roi", "aitg3", "tanner_trap_roi", "receiver9_tg3", "ai_tanner_subgraph_roi", "aitg2", "tanner_subgraph_roi", "receiver9_tg2", "ai_tanner_roi", "aitg", "tanner_roi", "receiver9_tg")
                 if policy_mode in ("distilled_tree_bandit", "tree_bandit", "dt_bandit"):
                     if selection_mode in window_modes:
                         dec_name = f"hybairdtbwin{int(it)}"
@@ -12353,7 +12608,9 @@ def run_awgn_sweep_for_code(
                     else:
                         dec_name = f"hybairroi{int(it)}"
                 elif policy_mode in ("probe_moe_roi_fix", "probe_moe_roi", "probe_moe", "probe_fix", "probe"):
-                    if selection_mode in ("ai_dual_safe_roi", "aidualsafe", "dual_safe_roi", "receiver9_safe"):
+                    if selection_mode in ("ai_shadow_roi", "aishadow", "shadow_roi", "receiver9_shadow"):
+                        dec_name = f"hybairshadow{int(it)}"
+                    elif selection_mode in ("ai_dual_safe_roi", "aidualsafe", "dual_safe_roi", "receiver9_safe"):
                         dec_name = f"hybairsafe{int(it)}"
                     elif selection_mode in ("ai_tanner_trap_roi", "aitg3", "tanner_trap_roi", "receiver9_tg3"):
                         dec_name = f"hybairtrap{int(it)}"
