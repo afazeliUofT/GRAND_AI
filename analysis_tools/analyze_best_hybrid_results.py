@@ -20,7 +20,7 @@ import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
 DecoderRow = Dict[str, str]
-HYBRID_PRIORITY = ["hybairshadow15", "hybairsafe15", "hybairtrap8", "hybairtrap10", "hybairtrap12", "hybairtrap15", "hybairtgsub15", "hybairtg15", "hybairpmix15", "hybairpfix15", "hybairpwin15", "hybairprobe15", "hybairprobefix15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
+HYBRID_PRIORITY = ["hybairteach15", "hybairshadow15", "hybairsafe15", "hybairtrap8", "hybairtrap10", "hybairtrap12", "hybairtrap15", "hybairtgsub15", "hybairtg15", "hybairpmix15", "hybairpfix15", "hybairpwin15", "hybairprobe15", "hybairprobefix15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
 
 
 def _to_float(value: object) -> float:
@@ -220,6 +220,8 @@ def main() -> int:
     _print_header("Comparing decoders")
     print(f"Legacy baseline : ldpc15")
     print(f"Hybrid analyzed : {hybrid_name}")
+    if hybrid_name == "hybairteach15":
+        print("INFO: active result is the teacher-distilled graph-aware hybrid run.")
     if hybrid_name == "hybairshadow15":
         print("INFO: active result is the safe full-LDPC shadow multi-snapshot run.")
     if hybrid_name == "hybairsafe15":

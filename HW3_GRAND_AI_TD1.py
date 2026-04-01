@@ -3222,6 +3222,428 @@ def _select_search_vars_ai_mix_roi(union_vars: np.ndarray,
     }
 
 
+# --- Teacher-distilled graph-aware ROI selector (offline-calibrated, online-lightweight) ---
+class TeacherDistillManager:
+    """Collect teacher-success supports and fit a tiny logistic scorer.
+
+    Calibration is treated as offline training time. Runtime inference is only a
+    small dot product per candidate variable, which matches the user's goal of
+    spending training time offline while keeping decode latency small.
+    """
+    def __init__(self):
+        self.collect = bool(_get_int_env("GRAND_AI_DISTILL_COLLECT", 0))
+        self.load = bool(_get_int_env("GRAND_AI_DISTILL_LOAD", 0))
+        self.model_path = str(os.environ.get("GRAND_AI_DISTILL_MODEL_PATH", "") or "").strip()
+        self.neg_ratio = float(_get_float_env("GRAND_AI_DISTILL_NEG_RATIO", 4.0) or 4.0)
+        self.max_rows = int(_get_int_env("GRAND_AI_DISTILL_MAX_ROWS", 240000) or 240000)
+        self.min_successes = int(_get_int_env("GRAND_AI_DISTILL_MIN_SUCCESSES", 48) or 48)
+        self.reg = float(_get_float_env("GRAND_AI_DISTILL_REG", 1.0e-3) or 1.0e-3)
+        self.lr = float(_get_float_env("GRAND_AI_DISTILL_LR", 0.16) or 0.16)
+        self.iters = int(_get_int_env("GRAND_AI_DISTILL_ITERS", 500) or 500)
+        self.verbose = bool(_get_int_env("GRAND_AI_DISTILL_VERBOSE", 1))
+        self.feature_names = [
+            "vote_norm",
+            "inv_post_norm",
+            "inv_chan_norm",
+            "density",
+            "disagree",
+            "weak_disagree",
+            "static_prior",
+            "block_score",
+        ]
+        self._X_chunks: List[np.ndarray] = []
+        self._y_chunks: List[np.ndarray] = []
+        self.success_examples = 0
+        self.rows_collected = 0
+        self.weights: Optional[np.ndarray] = None
+        self.bias: float = 0.0
+        self.mean: Optional[np.ndarray] = None
+        self.scale: Optional[np.ndarray] = None
+        self.ready = False
+        if self.load and self.model_path:
+            self._try_load()
+
+    def _try_load(self) -> None:
+        try:
+            if (not self.model_path) or (not os.path.isfile(self.model_path)):
+                return
+            blob = np.load(self.model_path, allow_pickle=False)
+            self.weights = np.asarray(blob["weights"], dtype=np.float64)
+            self.bias = float(np.asarray(blob["bias"]).reshape(()))
+            self.mean = np.asarray(blob["mean"], dtype=np.float64)
+            self.scale = np.asarray(blob["scale"], dtype=np.float64)
+            self.ready = bool(self.weights.ndim == 1 and self.mean.shape == self.weights.shape and self.scale.shape == self.weights.shape)
+            if self.verbose:
+                print(f"[TDISTILL] loaded model from {self.model_path} ready={self.ready}")
+        except Exception as e:
+            self.ready = False
+            if self.verbose:
+                print(f"[TDISTILL] WARNING: could not load model {self.model_path}: {e}")
+
+    def model_ready(self) -> bool:
+        return bool(self.ready and self.weights is not None and self.mean is not None and self.scale is not None)
+
+    def predict_prob(self, X: np.ndarray) -> np.ndarray:
+        X = np.asarray(X, dtype=np.float64)
+        if X.ndim != 2 or X.shape[0] == 0:
+            return np.zeros((X.shape[0] if X.ndim == 2 else 0,), dtype=np.float64)
+        if not self.model_ready():
+            return np.full(X.shape[0], 0.5, dtype=np.float64)
+        Xn = (X - self.mean[None, :]) / self.scale[None, :]
+        z = np.clip(Xn @ self.weights + float(self.bias), -30.0, 30.0)
+        return 1.0 / (1.0 + np.exp(-z))
+
+    def observe_success(self, feature_matrix: Optional[np.ndarray], feature_vars: Optional[np.ndarray], flipped_vars: Optional[np.ndarray]) -> None:
+        if not self.collect:
+            return
+        if feature_matrix is None or feature_vars is None or flipped_vars is None:
+            return
+        X = np.asarray(feature_matrix, dtype=np.float64)
+        vars_arr = np.asarray(feature_vars, dtype=np.int32).reshape(-1)
+        flips = np.asarray(flipped_vars, dtype=np.int32).reshape(-1)
+        if X.ndim != 2 or X.shape[0] != vars_arr.size or X.shape[0] == 0:
+            return
+        if flips.size == 0:
+            return
+        y = np.isin(vars_arr, flips).astype(np.float64)
+        pos_idx = np.flatnonzero(y > 0.5)
+        if pos_idx.size == 0:
+            return
+        neg_idx = np.flatnonzero(y <= 0.5)
+        max_neg = int(max(8, round(float(self.neg_ratio) * float(pos_idx.size))))
+        if neg_idx.size > max_neg:
+            order = np.argsort(-np.sum(X[neg_idx, :], axis=1))
+            neg_idx = neg_idx[order[:max_neg]]
+        keep = np.concatenate([pos_idx, neg_idx]).astype(np.int32, copy=False)
+        if keep.size == 0:
+            return
+        if self.rows_collected + int(keep.size) > self.max_rows:
+            room = int(max(0, self.max_rows - self.rows_collected))
+            if room <= 0:
+                return
+            keep = keep[:room]
+        self._X_chunks.append(np.asarray(X[keep, :], dtype=np.float32))
+        self._y_chunks.append(np.asarray(y[keep], dtype=np.float32))
+        self.success_examples += 1
+        self.rows_collected += int(keep.size)
+
+    def finalize(self) -> None:
+        if not self.collect:
+            return
+        if self.model_ready():
+            return
+        if self.success_examples < self.min_successes:
+            print(f"[TDISTILL] WARNING: only {self.success_examples} teacher-success examples; keeping heuristic fallback.")
+            return
+        if (not self._X_chunks) or (not self.model_path):
+            print("[TDISTILL] WARNING: no data or no model path; keeping heuristic fallback.")
+            return
+        X = np.concatenate(self._X_chunks, axis=0).astype(np.float64)
+        y = np.concatenate(self._y_chunks, axis=0).astype(np.float64)
+        if X.ndim != 2 or X.shape[0] < 32:
+            print("[TDISTILL] WARNING: insufficient rows after concatenation; keeping heuristic fallback.")
+            return
+        mean = X.mean(axis=0)
+        scale = X.std(axis=0)
+        scale[scale < 1.0e-6] = 1.0
+        Xn = (X - mean[None, :]) / scale[None, :]
+        pos_rate = float(np.clip(y.mean(), 1.0e-4, 1.0 - 1.0e-4))
+        w = np.zeros(Xn.shape[1], dtype=np.float64)
+        b = float(np.log(pos_rate / (1.0 - pos_rate)))
+        sample_w = np.where(y > 0.5, 0.5 / pos_rate, 0.5 / (1.0 - pos_rate)).astype(np.float64)
+        n = float(Xn.shape[0])
+        lr0 = float(self.lr)
+        reg = float(self.reg)
+        for it in range(max(50, int(self.iters))):
+            z = np.clip(Xn @ w + b, -30.0, 30.0)
+            p = 1.0 / (1.0 + np.exp(-z))
+            err = (p - y) * sample_w
+            grad_w = (Xn.T @ err) / n + reg * w
+            grad_b = float(np.sum(err) / n)
+            lr_t = lr0 * (0.98 ** float(it // 40))
+            w -= lr_t * grad_w
+            b -= lr_t * grad_b
+        os.makedirs(os.path.dirname(self.model_path) or ".", exist_ok=True)
+        np.savez(self.model_path,
+                 weights=w.astype(np.float32),
+                 bias=np.asarray(b, dtype=np.float32),
+                 mean=mean.astype(np.float32),
+                 scale=scale.astype(np.float32),
+                 feature_names=np.asarray(self.feature_names, dtype=object),
+                 rows=np.asarray([int(X.shape[0])], dtype=np.int32),
+                 successes=np.asarray([int(self.success_examples)], dtype=np.int32))
+        self.weights = np.asarray(w, dtype=np.float64)
+        self.bias = float(b)
+        self.mean = np.asarray(mean, dtype=np.float64)
+        self.scale = np.asarray(scale, dtype=np.float64)
+        self.ready = True
+        print(f"[TDISTILL] saved model to {self.model_path} rows={X.shape[0]} successes={self.success_examples}")
+
+
+_TEACHER_DISTILL_MANAGER: Optional[TeacherDistillManager] = None
+
+
+def _get_teacher_distill_manager() -> TeacherDistillManager:
+    global _TEACHER_DISTILL_MANAGER
+    if _TEACHER_DISTILL_MANAGER is None:
+        _TEACHER_DISTILL_MANAGER = TeacherDistillManager()
+    return _TEACHER_DISTILL_MANAGER
+
+
+def _build_teacher_distill_feature_bundle(union_vars: np.ndarray,
+                                          unsat_checks: np.ndarray,
+                                          code_cfg: CodeConfig,
+                                          llr_for_sort: np.ndarray,
+                                          cfg: ClusterGrandConfig,
+                                          llr_snapshot: Optional[np.ndarray] = None,
+                                          llr_channel: Optional[np.ndarray] = None) -> Dict[str, Any]:
+    union_vars = np.asarray(union_vars, dtype=np.int32).reshape(-1)
+    unsat_checks = np.asarray(unsat_checks, dtype=np.int32).reshape(-1)
+    if union_vars.size == 0:
+        return {
+            "feature_matrix": np.zeros((0, 8), dtype=np.float32),
+            "feature_vars": np.array([], dtype=np.int32),
+            "base_score": np.array([], dtype=np.float32),
+            "block_ids": np.array([], dtype=np.int32),
+            "block_score": np.array([], dtype=np.float32),
+            "abs_llr_union": np.array([], dtype=np.float32),
+            "vote_counts": np.array([], dtype=np.int32),
+            "block_concentration": 0.0,
+        }
+    eps = float(getattr(cfg, "sv_epsilon", 1.0e-3) or 1.0e-3)
+    abs_llr_union = np.abs(llr_for_sort[union_vars]).astype(np.float64, copy=False)
+    vote_counts = np.zeros(union_vars.size, dtype=np.int32)
+    var_to_local = {int(v): i for i, v in enumerate(union_vars.tolist())}
+    for j in unsat_checks.tolist():
+        for v in code_cfg.checks_to_vars[int(j)]:
+            loc = var_to_local.get(int(v), None)
+            if loc is not None:
+                vote_counts[int(loc)] += 1
+    max_vote = max(1, int(vote_counts.max()) if vote_counts.size else 0)
+    vote_norm = vote_counts.astype(np.float64) / float(max_vote)
+    inv_post = 1.0 / (abs_llr_union + eps)
+    inv_post_norm = inv_post / float(max(1.0e-9, float(inv_post.max()) if inv_post.size else 1.0))
+    degs = np.asarray([max(1, len(code_cfg.vars_to_checks[int(v)])) for v in union_vars.tolist()], dtype=np.float64)
+    density = np.clip(vote_counts.astype(np.float64) / degs, 0.0, 1.0)
+
+    inv_chan_norm = inv_post_norm.copy()
+    disagree = np.zeros(union_vars.size, dtype=np.float64)
+    weak_disagree = np.zeros(union_vars.size, dtype=np.float64)
+    if llr_channel is not None:
+        llr_channel = np.asarray(llr_channel, dtype=np.float32)
+        abs_chan = np.abs(llr_channel[union_vars]).astype(np.float64, copy=False)
+        inv_chan = 1.0 / (abs_chan + eps)
+        inv_chan_norm = inv_chan / float(max(1.0e-9, float(inv_chan.max()) if inv_chan.size else 1.0))
+        if llr_snapshot is not None:
+            llr_snapshot = np.asarray(llr_snapshot, dtype=np.float32)
+            snap_sign = np.sign(llr_snapshot[union_vars]).astype(np.int8, copy=False)
+            chan_sign = np.sign(llr_channel[union_vars]).astype(np.int8, copy=False)
+            disagree = ((snap_sign * chan_sign) < 0).astype(np.float64, copy=False)
+            weak_thr = float(getattr(cfg, "ai_rank_roi_weak_llr_abs_cap", 2.5) or 2.5)
+            weak_mask = (abs_llr_union <= weak_thr)
+            weak_disagree = ((disagree > 0.0) & weak_mask).astype(np.float64, copy=False)
+
+    static_prior = _get_ai_tanner_static_prior(code_cfg)[union_vars].astype(np.float64, copy=False)
+    sp_max = float(static_prior.max()) if static_prior.size else 0.0
+    if sp_max > 0.0:
+        static_prior = static_prior / sp_max
+
+    block_size = max(1, int(getattr(cfg, "ai_window_block_size", getattr(cfg, "ai_rank_roi_block_size", 64)) or 64))
+    block_ids = (union_vars.astype(np.int64) // block_size).astype(np.int32, copy=False)
+    block_conc = _ai_rank_roi_block_concentration(union_vars, block_size)
+    unique_blocks = np.unique(block_ids)
+    block_score = np.zeros(union_vars.size, dtype=np.float64)
+    for b in unique_blocks.tolist():
+        locs = np.flatnonzero(block_ids == int(b))
+        if locs.size == 0:
+            continue
+        bs = float(0.50 * np.mean(vote_norm[locs]) + 0.25 * np.mean(disagree[locs]) + 0.15 * np.mean(inv_chan_norm[locs]) + 0.10 * (float(locs.size) / float(max(1, union_vars.size))))
+        block_score[locs] = bs
+
+    base_score = (
+        1.00 * vote_norm
+        + 0.85 * inv_post_norm
+        + 0.65 * disagree * inv_post_norm
+        + 0.35 * density
+        + 0.35 * static_prior
+        + 0.30 * block_score
+    )
+
+    X = np.stack([
+        vote_norm,
+        inv_post_norm,
+        inv_chan_norm,
+        density,
+        disagree,
+        weak_disagree,
+        static_prior,
+        block_score,
+    ], axis=1).astype(np.float32)
+    return {
+        "feature_matrix": X,
+        "feature_vars": union_vars.astype(np.int32, copy=False),
+        "base_score": base_score.astype(np.float32, copy=False),
+        "block_ids": block_ids.astype(np.int32, copy=False),
+        "block_score": block_score.astype(np.float32, copy=False),
+        "abs_llr_union": abs_llr_union.astype(np.float32, copy=False),
+        "vote_counts": vote_counts.astype(np.int32, copy=False),
+        "block_concentration": float(block_conc),
+    }
+
+
+def _select_search_vars_ai_teacher_distill_roi(union_vars: np.ndarray,
+                                               unsat_checks: np.ndarray,
+                                               code_cfg: CodeConfig,
+                                               llr_for_sort: np.ndarray,
+                                               L: int,
+                                               cfg: ClusterGrandConfig,
+                                               llr_snapshot: Optional[np.ndarray] = None,
+                                               llr_channel: Optional[np.ndarray] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Teacher-distilled graph-aware selector.
+
+    Cold start: exactly fall back to the empirically strongest current regime
+    (``ai_mix_roi``) while collecting teacher-success supports.
+
+    Warm start: use the distilled logistic scorer to prioritize a compact local
+    trap core plus a global scout list, then interleave them with the heuristic
+    PMIX list so the selector stays robust on diffuse frames.
+    """
+    union_vars = np.asarray(union_vars, dtype=np.int32)
+    L = int(max(L, 0))
+    if L <= 0 or union_vars.size == 0:
+        return np.array([], dtype=np.int32), {
+            "selection_mode_used": "ai_teacher_distill_roi",
+            "sv_seeded_count": 0,
+            "sv_neighbor_visits": 0,
+            "sv_score_len": int(union_vars.size),
+            "td_model_ready": 0,
+            "td_profile": "empty",
+        }
+
+    tdm = _get_teacher_distill_manager()
+    bundle = _build_teacher_distill_feature_bundle(
+        union_vars=union_vars,
+        unsat_checks=unsat_checks,
+        code_cfg=code_cfg,
+        llr_for_sort=llr_for_sort,
+        cfg=cfg,
+        llr_snapshot=llr_snapshot,
+        llr_channel=llr_channel,
+    )
+
+    if not tdm.model_ready():
+        base_vars, base_meta = _select_search_vars_ai_mix_roi(
+            union_vars=union_vars,
+            unsat_checks=unsat_checks,
+            code_cfg=code_cfg,
+            llr_for_sort=llr_for_sort,
+            L=L,
+            cfg=cfg,
+            llr_snapshot=llr_snapshot,
+            llr_channel=llr_channel,
+        )
+        meta = dict(base_meta)
+        meta["selection_mode_used"] = "ai_teacher_distill_roi"
+        meta["td_model_ready"] = 0
+        meta["td_profile"] = "cold_mix"
+        if tdm.collect:
+            meta["td_feature_matrix"] = bundle["feature_matrix"]
+            meta["td_feature_vars"] = bundle["feature_vars"]
+        return np.asarray(base_vars, dtype=np.int32), meta
+
+    probs = tdm.predict_prob(bundle["feature_matrix"])
+    base_score = np.asarray(bundle["base_score"], dtype=np.float64)
+    fused = 0.78 * probs + 0.22 * (base_score / float(max(1.0e-9, float(base_score.max()) if base_score.size else 1.0)))
+    block_ids = np.asarray(bundle["block_ids"], dtype=np.int32)
+    block_conc = float(bundle["block_concentration"])
+    diffuse = bool(union_vars.size >= int(getattr(cfg, "ai_rank_roi_diffuse_union_size", 208) or 208) and block_conc <= float(getattr(cfg, "ai_rank_roi_diffuse_block_concentration", 0.08) or 0.08))
+    compact = bool(block_conc >= float(getattr(cfg, "ai_rank_roi_compact_block_concentration", 0.11) or 0.11))
+
+    if compact:
+        local_share = 0.72
+        profile = "teacher_compact"
+    elif diffuse:
+        local_share = 0.38
+        profile = "teacher_diffuse"
+    else:
+        local_share = 0.56
+        profile = "teacher_balanced"
+    local_budget = min(int(L), max(8, int(round(float(L) * local_share))))
+    global_budget = max(8, int(L - local_budget))
+
+    # Learned local trap-core blocks.
+    block_score_map: Dict[int, float] = {}
+    for b in np.unique(block_ids).tolist():
+        locs = np.flatnonzero(block_ids == int(b))
+        if locs.size == 0:
+            continue
+        block_score_map[int(b)] = float(np.mean(fused[locs]) + 0.15 * np.max(fused[locs]) + 0.05 * float(locs.size) / float(max(1, union_vars.size)))
+    block_order = sorted(block_score_map.keys(), key=lambda b: (-float(block_score_map[int(b)]), int(b)))
+    top_blocks = 1 if compact else (2 if diffuse else 2)
+    chosen_blocks = block_order[:max(1, min(len(block_order), top_blocks))]
+    neighbor_blocks = max(0, int(getattr(cfg, "ai_window_neighbor_blocks", 0) or 0))
+    if neighbor_blocks > 0:
+        seen_b = set(chosen_blocks)
+        for b in list(chosen_blocks):
+            for delta in range(1, neighbor_blocks + 1):
+                for nbid in (int(b) - delta, int(b) + delta):
+                    if nbid in block_score_map and nbid not in seen_b:
+                        chosen_blocks.append(int(nbid))
+                        seen_b.add(int(nbid))
+    local_locs = np.flatnonzero(np.isin(block_ids, np.asarray(chosen_blocks, dtype=np.int32)))
+    local_order = sorted(local_locs.tolist(), key=lambda loc: (-float(fused[int(loc)]), float(bundle["abs_llr_union"][int(loc)]), -int(bundle["vote_counts"][int(loc)]), int(union_vars[int(loc)])))
+    local_vars = [int(union_vars[int(loc)]) for loc in local_order[:local_budget]]
+
+    global_order = sorted(range(union_vars.size), key=lambda loc: (-float(fused[int(loc)]), float(bundle["abs_llr_union"][int(loc)]), -int(bundle["vote_counts"][int(loc)]), int(union_vars[int(loc)])))
+    global_vars = [int(union_vars[int(loc)]) for loc in global_order[:global_budget]]
+
+    # Heuristic back-stop from the empirically strongest hand-crafted regime.
+    mix_vars, mix_meta = _select_search_vars_ai_mix_roi(
+        union_vars=union_vars,
+        unsat_checks=unsat_checks,
+        code_cfg=code_cfg,
+        llr_for_sort=llr_for_sort,
+        L=L,
+        cfg=cfg,
+        llr_snapshot=llr_snapshot,
+        llr_channel=llr_channel,
+    )
+    mix_list = [int(v) for v in np.asarray(mix_vars, dtype=np.int32).tolist()]
+
+    selected: List[int] = []
+    seen = set()
+    max_len = max(len(local_vars), len(global_vars), len(mix_list))
+    order = (local_vars, global_vars, mix_list) if not diffuse else (global_vars, local_vars, mix_list)
+    for i in range(max_len):
+        for seq in order:
+            if i >= len(seq):
+                continue
+            v_int = int(seq[i])
+            if v_int not in seen:
+                selected.append(v_int)
+                seen.add(v_int)
+                if len(selected) >= L:
+                    break
+        if len(selected) >= L:
+            break
+
+    meta = {
+        "selection_mode_used": "ai_teacher_distill_roi",
+        "sv_seeded_count": int(mix_meta.get("sv_seeded_count", 0)),
+        "sv_neighbor_visits": int(mix_meta.get("sv_neighbor_visits", 0)),
+        "sv_score_len": int(union_vars.size),
+        "td_model_ready": 1,
+        "td_profile": str(profile),
+        "td_local_budget": int(local_budget),
+        "td_global_budget": int(global_budget),
+        "td_block_count": int(len(chosen_blocks)),
+    }
+    if tdm.collect:
+        meta["td_feature_matrix"] = bundle["feature_matrix"]
+        meta["td_feature_vars"] = bundle["feature_vars"]
+    return np.asarray(selected[:L], dtype=np.int32), meta
+
+
 def _get_ai_tanner_static_prior(code_cfg: CodeConfig) -> np.ndarray:
     """Return a cached static Tanner-graph prior per variable node.
 
@@ -4551,7 +4973,18 @@ def _select_presolver_vars(union_vars: np.ndarray,
         }
 
     selection_mode = str(getattr(cfg, "selection_mode", "llr") or "llr").strip().lower()
-    if selection_mode in ("ai_shadow_roi", "aishadow", "shadow_roi", "receiver9_shadow"):
+    if selection_mode in ("ai_teacher_distill_roi", "aiteach", "teacher_distill_roi", "receiver9_teacher"):
+        search_vars, front_end_meta = _select_search_vars_ai_teacher_distill_roi(
+            union_vars=union_vars,
+            unsat_checks=unsat_checks,
+            code_cfg=code_cfg,
+            llr_for_sort=llr_for_sort,
+            L=L,
+            cfg=cfg,
+            llr_snapshot=llr_snapshot,
+            llr_channel=getattr(frame, "llr_channel", None),
+        )
+    elif selection_mode in ("ai_shadow_roi", "aishadow", "shadow_roi", "receiver9_shadow"):
         base_vars, meta = _select_search_vars_ai_shadow_roi(
             union_vars=union_vars,
             unsat_checks=unsat_checks,
@@ -7659,7 +8092,18 @@ def run_local_grand_on_union_of_clusters(frame: FrameLog,
     L = _auto_pick_grand_search_size(L_full, cfg)
     selection_mode = str(getattr(cfg, "selection_mode", "llr") or "llr").strip().lower()
 
-    if selection_mode in ("ai_shadow_roi", "aishadow", "shadow_roi", "receiver9_shadow"):
+    if selection_mode in ("ai_teacher_distill_roi", "aiteach", "teacher_distill_roi", "receiver9_teacher"):
+        search_vars, front_end_meta = _select_search_vars_ai_teacher_distill_roi(
+            union_vars=union_vars,
+            unsat_checks=unsat_checks,
+            code_cfg=code_cfg,
+            llr_for_sort=llr_for_sort,
+            L=L,
+            cfg=cfg,
+            llr_snapshot=llr_snapshot,
+            llr_channel=getattr(frame, "llr_channel", None),
+        )
+    elif selection_mode in ("ai_shadow_roi", "aishadow", "shadow_roi", "receiver9_shadow"):
         search_vars, front_end_meta = _select_search_vars_ai_shadow_roi(
             union_vars=union_vars,
             unsat_checks=unsat_checks,
@@ -8166,6 +8610,13 @@ def run_local_grand_on_union_of_clusters(frame: FrameLog,
     setattr(res, "sv_seeded_count", int(sv_seeded_count))
     setattr(res, "sv_neighbor_visits", int(sv_neighbor_visits))
     setattr(res, "sv_score_len", int(sv_score_len))
+    if isinstance(front_end_meta, dict):
+        for _k, _v in front_end_meta.items():
+            if str(_k).startswith("td_"):
+                try:
+                    setattr(res, str(_k), _v)
+                except Exception:
+                    pass
 
     return res
 
@@ -10433,6 +10884,22 @@ def _run_stage2_single_snapshot(
 
 
 
+def _teacher_distill_observe_from_result(res: Optional[ClusterGrandResult]) -> None:
+    if res is None:
+        return
+    mgr = _get_teacher_distill_manager()
+    if not mgr.collect:
+        return
+    if not bool(getattr(res, "success", False)):
+        return
+    if int(getattr(res, "final_bit_errors", 1) or 1) != 0:
+        return
+    X = getattr(res, "td_feature_matrix", None)
+    vars_arr = getattr(res, "td_feature_vars", None)
+    flips = getattr(res, "flipped_vars", None)
+    mgr.observe_success(X, vars_arr, flips)
+
+
 def _aggregate_stage2_attempts(
     final_res: ClusterGrandResult,
     attempts: Sequence[ClusterGrandResult],
@@ -10760,6 +11227,7 @@ def run_hybrid_ldpc_grand_adaptive(
                                 ai_gate_leaf = "probe_success"
                                 snapshot_success_iter = snap_i
                                 stage2_success_profile = "probe_tiny"
+                                _teacher_distill_observe_from_result(res_probe)
                                 break
 
                         probe_regime, allow_full, allow_meta, allow_next, plan_reason = _ai_probe_plan(
@@ -10800,6 +11268,7 @@ def run_hybrid_ldpc_grand_adaptive(
                                     if bool(res_snap.success):
                                         snapshot_success_iter = snap_i
                                         stage2_success_profile = profile_name
+                                        _teacher_distill_observe_from_result(res_snap)
                                         break
                             if stage2_success_profile not in ("stage1", "skip"):
                                 break
@@ -10873,6 +11342,7 @@ def run_hybrid_ldpc_grand_adaptive(
                                 if bool(res_snap.success):
                                     snapshot_success_iter = snap_i
                                     stage2_success_profile = profile_name
+                                    _teacher_distill_observe_from_result(res_snap)
                                     break
                         if stage2_success_profile not in ("stage1", "skip"):
                             break
@@ -12608,7 +13078,9 @@ def run_awgn_sweep_for_code(
                     else:
                         dec_name = f"hybairroi{int(it)}"
                 elif policy_mode in ("probe_moe_roi_fix", "probe_moe_roi", "probe_moe", "probe_fix", "probe"):
-                    if selection_mode in ("ai_shadow_roi", "aishadow", "shadow_roi", "receiver9_shadow"):
+                    if selection_mode in ("ai_teacher_distill_roi", "aiteach", "teacher_distill_roi", "receiver9_teacher"):
+                        dec_name = f"hybairteach{int(it)}"
+                    elif selection_mode in ("ai_shadow_roi", "aishadow", "shadow_roi", "receiver9_shadow"):
                         dec_name = f"hybairshadow{int(it)}"
                     elif selection_mode in ("ai_dual_safe_roi", "aidualsafe", "dual_safe_roi", "receiver9_safe"):
                         dec_name = f"hybairsafe{int(it)}"
@@ -12733,6 +13205,11 @@ def _run_experiments_main():
             output_dir=out_dir,
             alpha=0.8,
         )
+
+    try:
+        _get_teacher_distill_manager().finalize()
+    except Exception as e:
+        print(f"[TDISTILL] WARNING: finalize failed: {e}")
 
 
 if __name__ == "__main__":

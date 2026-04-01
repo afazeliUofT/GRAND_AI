@@ -1,0 +1,1096 @@
+{
+  "errors": {},
+  "python": "/scratch/rsadve1/venvs/grand5g/bin/python",
+  "status": {
+    "LDPC5GEncoder_ok": true,
+    "TDL_ok": true,
+    "pyparsing_ok": true,
+    "sionna_ok": true,
+    "six_ok": true
+  }
+}
+[TD1] starting phase=calibration RESULTS_DIR=/tmp/hybair_td1_calib_30858975 SNR_SWEEP=10.0,10.5,11.0,11.5,12.0 MODEL=results/run_hybair_td1_30858975/teacher_distill_model_td1.npz
+Numba threads: 64
+[HW model]  {'fclk_mhz': 800, 'ldpc_edges_per_cycle': 64, 'ldpc_bits_per_cycle_hd': 64, 'ldpc_iter_overhead_cycles': 20, 'grand_edges_per_cycle': 64, 'grand_checks_per_cycle': 64, 'grand_batch_overhead_cycles': 200, 'grand_abs_per_cycle': 64, 'grand_sort_elem_log2_per_cycle': 64, 'grand_cost_add_per_cycle': 64, 'grand_patsort_patlog2_per_cycle': 64, 'cluster_pair_edges_per_cycle': 0}
+[RUN_EXPERIMENTS] codes=['sionna5g']  snr_sweep=[10.0, 10.5, 11.0, 11.5, 12.0]  out_dir=/tmp/hybair_td1_calib_30858975
+[RUN_EXPERIMENTS] mc_cfg=AdaptiveMCConfig(target_frame_errors=180, min_frames=0, max_frames=120000)
+Fast decoding structures prepared: 20488 edges
+[RUN_EXPERIMENTS] Built code: sionna5g_k1024_n2048_qm1
+[run_awgn_sweep_for_code] SNR-parallel OFF (serial); Numba threads=64
+
+=== Adaptive LDPC-only Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : ldpc15
+SNR (dB)                      : 10.00
+Frames simulated              : 3225
+Frame errors                  : 180 (target=180)
+Bit error rate (BER)          : 1.483e-02
+Frame error rate (FER)        : 5.581e-02
+Avg LDPC iterations/frame     : 4.86
+Avg HW cycles/frame           : 6772.55
+Avg HW decode time/frame      : 8.47 µs
+HW model (fclk_mhz)            : 800.0 MHz
+[VERIFY] Receiver9 decoder=hybairteach15 policy=probe_moe_roi_fix selection=ai_teacher_distill_roi snapshots=[4, 8, 12]
+[WARN] GRAND failed to run on frame 14 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 42 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 45 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 57 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 66 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 124 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 138 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 146 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 170 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 178 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 196 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 233 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 243 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 250 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 255 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 268 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 270 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 272 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 320 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 335 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 342 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 387 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 401 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 420 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 453 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 461 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 501 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 560 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 573 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 581 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 601 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 606 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 629 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 642 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 670 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 675 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 687 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 691 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 715 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 720 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 743 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 748 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 760 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 791 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 816 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 823 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 827 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 867 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 893 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 908 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 927 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1037 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1048 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1059 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1065 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1067 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1074 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1133 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1177 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1191 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1194 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1204 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1209 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1226 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1262 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1266 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1293 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1304 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1331 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1346 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1390 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1405 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1430 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1433 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1462 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1465 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1484 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1487 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1500 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1546 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1595 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1601 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1616 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1652 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1656 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1669 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1704 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1718 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1727 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1744 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1751 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1755 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1864 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1917 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1941 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1954 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1955 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1964 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1970 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2044 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2057 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2058 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2067 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2075 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2088 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2104 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2125 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2153 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2155 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2164 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2177 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2187 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2256 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2268 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2280 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2299 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2315 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2351 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2378 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2398 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2404 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2438 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2442 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2457 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2461 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2473 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2488 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2492 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2493 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2494 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2503 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2510 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2525 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2549 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2561 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2574 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2580 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2592 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2597 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2599 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2605 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2626 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2647 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2647 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2647 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2649 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2667 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2680 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2722 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2735 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2742 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2746 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2764 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2772 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2832 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2846 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2861 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2879 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2910 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2917 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2938 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2973 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2992 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3016 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3019 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3025 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3026 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3038 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3039 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3050 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3068 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3078 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3080 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3083 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3086 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3109 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3134 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3138 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3175 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3205 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3212 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3224 at snap=4: name 'L' is not defined
+
+=== Adaptive HYBRID Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : hybairteach15
+SNR (dB)                      : 10.00
+Frames simulated              : 3225
+Final frame errors            : 180 (target=180)
+Stage-1 BER                   : 1.483e-02
+Stage-1 FER                   : 5.581e-02
+Final BER (LDPC+GRAND)        : 1.483e-02
+Final FER (LDPC+GRAND)        : 5.581e-02
+Avg stage-1 iters/frame       : 4.86
+Avg HW time/frame (stage-1)   : 8.47 µs
+Avg HW time/frame (GRAND)     : 0.00 µs
+Avg HW time/frame (total)     : 8.47 µs
+
+=== Adaptive LDPC-only Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : ldpc15
+SNR (dB)                      : 10.50
+Frames simulated              : 4943
+Frame errors                  : 180 (target=180)
+Bit error rate (BER)          : 9.707e-03
+Frame error rate (FER)        : 3.642e-02
+Avg LDPC iterations/frame     : 4.56
+Avg HW cycles/frame           : 6343.26
+Avg HW decode time/frame      : 7.93 µs
+HW model (fclk_mhz)            : 800.0 MHz
+[VERIFY] Receiver9 decoder=hybairteach15 policy=probe_moe_roi_fix selection=ai_teacher_distill_roi snapshots=[4, 8, 12]
+[WARN] GRAND failed to run on frame 27 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 46 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 115 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 173 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 209 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 234 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 235 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 243 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 334 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 340 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 350 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 379 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 382 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 406 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 444 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 445 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 454 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 531 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 545 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 575 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 595 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 607 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 644 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 659 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 664 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 674 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 697 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 699 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 733 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 776 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 779 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 781 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 782 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 829 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 842 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 844 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 866 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 870 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 878 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 898 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 922 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 928 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 929 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 957 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 972 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1038 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1045 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1143 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1147 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1211 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1213 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1223 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1231 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1232 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1309 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1358 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1380 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1394 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1430 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1458 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1489 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1529 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1554 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1557 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1594 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1600 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1608 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1610 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1645 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1704 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1745 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1784 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1804 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1927 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2027 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2049 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2069 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2084 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2147 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2149 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2165 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2182 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2189 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2190 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2235 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2261 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2290 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2348 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2387 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2393 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2402 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2423 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2463 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2489 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2516 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2521 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2533 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2533 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2533 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2537 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2576 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2590 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2609 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2632 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2647 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2674 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2728 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2739 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2800 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2811 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2853 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2894 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2965 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3014 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3032 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3056 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3078 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3091 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3151 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3159 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3237 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3295 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3302 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3325 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3348 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3379 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3394 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3503 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3518 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3550 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3583 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3607 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3607 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3607 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3680 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3697 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3705 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3714 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3734 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3766 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3775 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3821 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3916 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3917 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3936 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3983 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4017 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4022 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4045 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4072 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4075 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4101 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4180 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4182 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4191 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4255 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4333 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4334 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4346 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4361 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4363 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4405 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4472 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4489 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4521 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4539 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4547 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4583 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4597 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4607 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4641 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4656 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4778 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4792 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4810 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4813 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4857 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4879 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4899 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4902 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4911 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4919 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4931 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4931 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4931 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4942 at snap=4: name 'L' is not defined
+
+=== Adaptive HYBRID Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : hybairteach15
+SNR (dB)                      : 10.50
+Frames simulated              : 4943
+Final frame errors            : 180 (target=180)
+Stage-1 BER                   : 9.707e-03
+Stage-1 FER                   : 3.642e-02
+Final BER (LDPC+GRAND)        : 9.707e-03
+Final FER (LDPC+GRAND)        : 3.642e-02
+Avg stage-1 iters/frame       : 4.56
+Avg HW time/frame (stage-1)   : 7.93 µs
+Avg HW time/frame (GRAND)     : 0.00 µs
+Avg HW time/frame (total)     : 7.93 µs
+
+=== Adaptive LDPC-only Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : ldpc15
+SNR (dB)                      : 11.00
+Frames simulated              : 5669
+Frame errors                  : 180 (target=180)
+Bit error rate (BER)          : 8.818e-03
+Frame error rate (FER)        : 3.175e-02
+Avg LDPC iterations/frame     : 4.41
+Avg HW cycles/frame           : 6130.96
+Avg HW decode time/frame      : 7.66 µs
+HW model (fclk_mhz)            : 800.0 MHz
+[VERIFY] Receiver9 decoder=hybairteach15 policy=probe_moe_roi_fix selection=ai_teacher_distill_roi snapshots=[4, 8, 12]
+[WARN] GRAND failed to run on frame 83 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 140 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 159 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 160 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 163 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 218 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 241 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 326 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 346 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 386 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 393 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 425 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 487 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 505 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 548 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 596 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 629 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 632 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 636 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 732 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 770 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 804 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 834 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 840 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 890 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 903 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 918 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 983 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 994 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 998 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1103 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1104 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1118 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1239 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1272 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1296 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1303 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1330 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1333 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1347 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1441 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1682 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1704 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1708 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1770 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1772 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1833 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1844 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1846 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1867 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1882 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1890 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1891 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1897 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1938 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1963 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1971 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1977 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1985 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2041 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2054 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2066 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2098 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2109 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2112 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2128 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2151 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2156 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2160 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2168 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2239 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2244 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2248 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2361 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2386 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2389 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2411 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2422 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2480 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2499 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2510 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2540 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2585 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2611 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2710 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2770 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2771 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2773 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2824 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2854 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2857 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2860 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2899 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2980 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2990 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3009 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3045 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3127 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3267 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3267 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3267 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3307 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3329 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3340 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3366 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3369 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3376 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3438 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3444 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3445 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3509 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3540 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3552 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3586 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3592 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3641 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3647 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3682 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3688 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3746 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3823 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3953 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3967 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4015 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4026 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4033 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4108 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4119 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4141 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4147 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4173 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4202 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4208 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4216 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4234 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4250 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4264 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4341 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4387 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4500 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4526 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4530 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4542 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4558 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4598 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4672 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4736 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4755 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4769 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4787 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4865 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4869 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4889 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4928 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4952 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4969 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5071 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5084 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5086 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5097 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5102 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5116 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5137 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5201 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5255 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5280 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5287 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5301 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5328 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5355 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5396 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5399 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5438 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5439 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5441 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5441 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5441 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5441 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5454 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5512 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5606 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5622 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5642 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5660 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5668 at snap=4: name 'L' is not defined
+
+=== Adaptive HYBRID Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : hybairteach15
+SNR (dB)                      : 11.00
+Frames simulated              : 5669
+Final frame errors            : 180 (target=180)
+Stage-1 BER                   : 8.818e-03
+Stage-1 FER                   : 3.175e-02
+Final BER (LDPC+GRAND)        : 8.818e-03
+Final FER (LDPC+GRAND)        : 3.175e-02
+Avg stage-1 iters/frame       : 4.41
+Avg HW time/frame (stage-1)   : 7.66 µs
+Avg HW time/frame (GRAND)     : 0.00 µs
+Avg HW time/frame (total)     : 7.66 µs
+
+=== Adaptive LDPC-only Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : ldpc15
+SNR (dB)                      : 11.50
+Frames simulated              : 7879
+Frame errors                  : 180 (target=180)
+Bit error rate (BER)          : 5.723e-03
+Frame error rate (FER)        : 2.285e-02
+Avg LDPC iterations/frame     : 4.19
+Avg HW cycles/frame           : 5828.12
+Avg HW decode time/frame      : 7.29 µs
+HW model (fclk_mhz)            : 800.0 MHz
+[VERIFY] Receiver9 decoder=hybairteach15 policy=probe_moe_roi_fix selection=ai_teacher_distill_roi snapshots=[4, 8, 12]
+[WARN] GRAND failed to run on frame 5 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 11 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 17 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 26 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 58 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 88 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 148 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 166 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 168 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 211 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 247 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 251 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 319 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 364 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 371 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 378 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 404 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 490 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 545 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 687 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 690 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 707 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 747 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 813 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 875 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 879 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 941 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 946 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1015 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1112 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1199 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1200 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1202 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1225 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1344 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1413 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1424 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1440 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1455 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1460 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1460 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1460 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1460 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1467 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1503 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1534 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1540 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1540 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1540 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1540 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1544 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1594 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1656 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1671 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1788 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1887 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1910 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1942 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1988 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2054 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2141 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2169 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2221 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2222 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2426 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2426 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2426 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2426 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2446 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2467 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2472 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2515 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2537 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2575 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2642 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2645 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2655 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2692 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2703 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2728 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2731 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2876 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2936 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3040 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3106 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3169 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3198 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3239 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3324 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3341 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3414 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3433 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3532 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3533 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3544 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3586 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3611 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3638 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3735 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3792 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3847 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3893 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3948 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4049 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4184 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4253 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4272 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4309 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4329 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4351 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4404 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4469 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4531 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4546 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4556 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4560 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4561 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4571 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4638 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4668 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4801 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4811 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4848 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4918 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4927 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4960 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5000 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5015 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5017 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5090 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5104 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5148 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5195 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5306 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5313 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5366 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5373 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5387 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5418 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5489 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5492 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5493 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5527 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5577 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5642 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5704 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5821 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5909 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5960 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6037 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6038 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6182 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6246 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6319 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6367 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6385 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6406 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6470 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6483 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6661 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6818 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6819 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6823 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6827 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6834 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6844 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6844 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6844 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6857 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6890 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6898 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6985 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7045 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7069 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7105 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7134 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7228 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7250 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7339 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7345 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7346 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7444 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7548 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7561 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7570 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7685 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7710 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7795 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7842 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7852 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7878 at snap=4: name 'L' is not defined
+
+=== Adaptive HYBRID Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : hybairteach15
+SNR (dB)                      : 11.50
+Frames simulated              : 7879
+Final frame errors            : 180 (target=180)
+Stage-1 BER                   : 5.723e-03
+Stage-1 FER                   : 2.285e-02
+Final BER (LDPC+GRAND)        : 5.723e-03
+Final FER (LDPC+GRAND)        : 2.285e-02
+Avg stage-1 iters/frame       : 4.19
+Avg HW time/frame (stage-1)   : 7.29 µs
+Avg HW time/frame (GRAND)     : 0.00 µs
+Avg HW time/frame (total)     : 7.29 µs
+
+=== Adaptive LDPC-only Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : ldpc15
+SNR (dB)                      : 12.00
+Frames simulated              : 9534
+Frame errors                  : 180 (target=180)
+Bit error rate (BER)          : 4.948e-03
+Frame error rate (FER)        : 1.888e-02
+Avg LDPC iterations/frame     : 4.05
+Avg HW cycles/frame           : 5633.59
+Avg HW decode time/frame      : 7.04 µs
+HW model (fclk_mhz)            : 800.0 MHz
+[VERIFY] Receiver9 decoder=hybairteach15 policy=probe_moe_roi_fix selection=ai_teacher_distill_roi snapshots=[4, 8, 12]
+[WARN] GRAND failed to run on frame 39 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 167 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 213 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 252 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 320 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 331 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 443 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 445 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 449 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 487 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 608 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 620 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 620 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 620 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 620 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 652 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 722 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 762 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 815 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 842 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 852 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 913 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 951 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 952 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 978 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1045 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1053 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1086 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1146 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1182 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1229 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1241 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1243 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1246 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1264 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1366 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1370 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1383 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1388 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1452 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1550 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1554 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1554 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1554 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1554 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1575 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1709 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1733 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1765 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1776 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1781 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1845 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1866 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 1927 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2048 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2097 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2282 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2331 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2333 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2437 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2509 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2523 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2592 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2664 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2676 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2692 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2710 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2743 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2847 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2895 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2900 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2920 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 2936 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3122 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3133 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3205 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3216 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3241 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3279 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3292 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3589 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3654 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3781 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 3840 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4136 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4175 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4208 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4240 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4251 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4296 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4362 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4659 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4711 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4741 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4843 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4843 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4843 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4843 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4877 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 4985 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5002 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5206 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5278 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5382 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5419 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5509 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5561 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5623 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5801 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5812 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5866 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5873 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5891 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5945 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5973 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5975 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 5986 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6006 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6049 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6067 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6108 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6126 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6140 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6166 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6167 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6286 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6360 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6380 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6414 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6416 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6420 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6454 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6571 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6638 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6679 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6692 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6705 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6839 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6839 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6839 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6846 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6881 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6983 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 6991 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7115 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7141 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7221 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7277 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7379 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7414 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7522 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7532 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7551 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7683 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7717 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7942 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 7974 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 8148 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 8176 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 8309 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 8329 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 8406 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 8504 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 8562 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 8610 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 8716 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 8758 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 8776 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 8800 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 8895 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 8909 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 8996 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9000 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9017 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9038 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9038 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9038 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9038 at snap=8: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9041 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9043 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9124 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9169 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9237 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9264 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9283 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9289 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9346 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9419 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9426 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9434 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9526 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9528 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9529 at snap=4: name 'L' is not defined
+[WARN] GRAND failed to run on frame 9533 at snap=4: name 'L' is not defined
+
+=== Adaptive HYBRID Monte-Carlo (channel=SIONNA_TDL) ===
+Decoder label                 : hybairteach15
+SNR (dB)                      : 12.00
+Frames simulated              : 9534
+Final frame errors            : 180 (target=180)
+Stage-1 BER                   : 4.948e-03
+Stage-1 FER                   : 1.888e-02
+Final BER (LDPC+GRAND)        : 4.948e-03
+Final FER (LDPC+GRAND)        : 1.888e-02
+Avg stage-1 iters/frame       : 4.05
+Avg HW time/frame (stage-1)   : 7.04 µs
+Avg HW time/frame (GRAND)     : 0.00 µs
+Avg HW time/frame (total)     : 7.04 µs
+[save_awgn_results] Wrote raw results : /tmp/hybair_td1_calib_30858975/sionna_tdl_sionna5g_k1024_n2048_qm1_hybrid_20260331-194852_raw.pkl
+[save_awgn_results] Wrote mean summary: /tmp/hybair_td1_calib_30858975/sionna_tdl_sionna5g_k1024_n2048_qm1_hybrid_20260331-194852_summary.csv
+[save_awgn_results] Wrote tails summary: /tmp/hybair_td1_calib_30858975/sionna_tdl_sionna5g_k1024_n2048_qm1_hybrid_20260331-194852_summary_tails.csv
+[TDISTILL] WARNING: only 0 teacher-success examples; keeping heuristic fallback.
