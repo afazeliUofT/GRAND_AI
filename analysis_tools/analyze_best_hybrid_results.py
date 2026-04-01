@@ -20,7 +20,7 @@ import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
 DecoderRow = Dict[str, str]
-HYBRID_PRIORITY = ["hybairtd215", "hybairteach15", "hybairshadow15", "hybairsafe15", "hybairtrap8", "hybairtrap10", "hybairtrap12", "hybairtrap15", "hybairtgsub15", "hybairtg15", "hybairpmix15", "hybairpfix15", "hybairpwin15", "hybairprobe15", "hybairprobefix15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
+HYBRID_PRIORITY = ["hybairtd315", "hybairtd215", "hybairteach15", "hybairshadow15", "hybairsafe15", "hybairtrap8", "hybairtrap10", "hybairtrap12", "hybairtrap15", "hybairtgsub15", "hybairtg15", "hybairpmix15", "hybairpfix15", "hybairpwin15", "hybairprobe15", "hybairprobefix15", "hybairwroi15", "hybairdtbwin15", "hybairroi15", "hybairdtbroi15", "hybairdtroi15", "hybairdtb15", "hybairdt15", "hybair15", "hybmeta15", "hybahr15", "hybosd15", "hybbgr15", "hyb15"]
 
 
 def _to_float(value: object) -> float:
@@ -235,6 +235,16 @@ def main() -> int:
             err_line = _extract_last_error_line(err_path)
             if err_line:
                 print(err_line, file=sys.stderr)
+        failure_notes = sorted(glob.glob(os.path.join(repo_root, 'results', 'run_*', '*FAILURE*.txt')))
+        if failure_notes:
+            try:
+                latest_fail = max(failure_notes, key=os.path.getmtime)
+                with open(latest_fail, 'r', encoding='utf-8', errors='replace') as f:
+                    msg = f.read().strip()
+                if msg:
+                    print(msg, file=sys.stderr)
+            except Exception:
+                pass
         return 1
 
     summary_idx = _index(summary_rows)
@@ -254,6 +264,8 @@ def main() -> int:
     _print_header("Comparing decoders")
     print(f"Legacy baseline : ldpc15")
     print(f"Hybrid analyzed : {hybrid_name}")
+    if hybrid_name == "hybairtd315":
+        print("INFO: active result is the TD3 teacher-distilled graph-aware hybrid run.")
     if hybrid_name == "hybairtd215":
         print("INFO: active result is the TD2 teacher-distilled graph-aware hybrid run.")
     if hybrid_name == "hybairteach15":
