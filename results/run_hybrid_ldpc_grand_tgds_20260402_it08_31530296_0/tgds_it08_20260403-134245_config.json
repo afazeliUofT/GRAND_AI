@@ -1,0 +1,74 @@
+{
+  "alpha": 0.8,
+  "calib": {
+    "batch_size": 4096,
+    "hard_negative_cap": 64,
+    "max_frames": 60000,
+    "neg_ratio": 6.0,
+    "student_epochs": 16,
+    "student_lr": 0.025,
+    "target_failed_frames": 96,
+    "teacher_epochs": 18,
+    "teacher_hidden": 32,
+    "teacher_lr": 0.01,
+    "temperature": 2.5
+  },
+  "calib_snr_db": [
+    9.5,
+    10.0,
+    10.5,
+    11.0
+  ],
+  "calibration": {
+    "calib_failed_frames": 96,
+    "calib_total_frames": 894,
+    "model_path": "results/run_hybrid_ldpc_grand_tgds_20260402_it08_31530296_0/tgds_student_it08.npz",
+    "model_ready": true
+  },
+  "channel": {
+    "CHANNEL_NAME": "SIONNA_TDL",
+    "SIONNA_CFO_HZ": "80.0",
+    "SIONNA_CSI_MODE": "nr_imperfect",
+    "SIONNA_TDL_DELAY_SPREAD_S": "3.0e-7",
+    "SIONNA_TDL_MAX_SPEED": "20.0",
+    "SIONNA_TDL_MIN_SPEED": "5.0",
+    "SIONNA_TDL_MODEL": "C"
+  },
+  "code": "sionna5g_k1024_n2048_qm1",
+  "eval_snr_db": [
+    10.0,
+    10.5,
+    11.0,
+    11.5,
+    12.0
+  ],
+  "hybrid": {
+    "ai_weight": 1.35,
+    "compact_weight": 0.1,
+    "full_budget": 384,
+    "full_wmax": 4,
+    "gain_pool": 14,
+    "gain_weight": 0.22,
+    "global_pool": 14,
+    "llr_pool": 14,
+    "llr_weight": 1.0,
+    "max_rois": 4,
+    "mid_budget": 128,
+    "mid_wmax": 3,
+    "osc_pool": 10,
+    "osc_weight": 0.16,
+    "roi_local_cap": 10,
+    "tiny_budget": 32,
+    "tiny_wmax": 2,
+    "union_cap": 24
+  },
+  "k_info": 1024,
+  "mc": {
+    "max_frames": 120000,
+    "min_frames": 0,
+    "target_frame_errors": 140
+  },
+  "n_tx": 2048,
+  "qm": 1,
+  "stage1_iters": 8
+}

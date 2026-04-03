@@ -1,0 +1,86 @@
+{
+  "errors": {},
+  "python": "/scratch/rsadve1/venvs/grand5g/bin/python",
+  "status": {
+    "LDPC5GEncoder_ok": true,
+    "TDL_ok": true,
+    "numba_ok": true,
+    "numpy_ok": true,
+    "scipy_ok": true,
+    "sionna_ok": true
+  }
+}
+[SBATCH CONFIG] task=1 it=15 eval_snr=10.5,11.0,11.5,12.0,12.5 calib_snr=10.0,10.5,11.0,11.5
+[SBATCH CONFIG] channel=SIONNA_TDL tdl=C delay=3.0e-7 speed=[5.0,20.0] cfo=80.0 csi=nr_imperfect
+[SBATCH CONFIG] budgets tiny/mid/full=32/128/384 weights=1.35/0.22/0.16
+[RUN] code=sionna5g_k1024_n2048_qm1 it=15 eval_snr=[10.5, 11.0, 11.5, 12.0, 12.5]
+[RUN] calib={'calib_total_frames': 2386, 'calib_failed_frames': 96, 'model_ready': True, 'model_path': 'results/run_hybrid_ldpc_grand_tgds_20260402_it15_31530296_1/tgds_student_it15.npz'}
+
+=== TGDS HYBRID EVAL ===
+SNR (dB)                    : 10.50
+Frames simulated            : 4320
+LDPC FER / BER              : 3.287037e-02 / 5.130118e-03
+Hybrid FER / BER            : 3.240741e-02 / 5.130118e-03
+Avg stage-1 iters/frame     : 4.838
+GRAND invocation rate       : 0.032870
+GRAND rescue rate | invoked : 0.014085
+Avg GRAND patterns/failure  : 33.338
+Avg stage-1 decoder us      : 215620.734
+Avg GRAND decoder us        : 152.038
+Avg total hybrid decoder us : 215772.772
+
+=== TGDS HYBRID EVAL ===
+SNR (dB)                    : 11.00
+Frames simulated            : 5807
+LDPC FER / BER              : 2.514207e-02 / 4.152451e-03
+Hybrid FER / BER            : 2.410883e-02 / 4.152451e-03
+Avg stage-1 iters/frame     : 4.636
+GRAND invocation rate       : 0.025142
+GRAND rescue rate | invoked : 0.041096
+Avg GRAND patterns/failure  : 34.479
+Avg stage-1 decoder us      : 202342.857
+Avg GRAND decoder us        : 114.215
+Avg total hybrid decoder us : 202457.072
+
+=== TGDS HYBRID EVAL ===
+SNR (dB)                    : 11.50
+Frames simulated            : 7293
+LDPC FER / BER              : 1.947073e-02 / 3.140051e-03
+Hybrid FER / BER            : 1.919649e-02 / 3.140051e-03
+Avg stage-1 iters/frame     : 4.459
+GRAND invocation rate       : 0.019471
+GRAND rescue rate | invoked : 0.014085
+Avg GRAND patterns/failure  : 34.254
+Avg stage-1 decoder us      : 189581.209
+Avg GRAND decoder us        : 88.402
+Avg total hybrid decoder us : 189669.611
+
+=== TGDS HYBRID EVAL ===
+SNR (dB)                    : 12.00
+Frames simulated            : 9355
+LDPC FER / BER              : 1.517905e-02 / 2.255541e-03
+Hybrid FER / BER            : 1.496526e-02 / 2.255541e-03
+Avg stage-1 iters/frame     : 4.292
+GRAND invocation rate       : 0.015179
+GRAND rescue rate | invoked : 0.014085
+Avg GRAND patterns/failure  : 33.380
+Avg stage-1 decoder us      : 117796.949
+Avg GRAND decoder us        : 75.221
+Avg total hybrid decoder us : 117872.170
+
+=== TGDS HYBRID EVAL ===
+SNR (dB)                    : 12.50
+Frames simulated            : 10105
+LDPC FER / BER              : 1.415141e-02 / 2.071318e-03
+Hybrid FER / BER            : 1.385453e-02 / 2.071318e-03
+Avg stage-1 iters/frame     : 4.223
+GRAND invocation rate       : 0.014151
+GRAND rescue rate | invoked : 0.020979
+Avg GRAND patterns/failure  : 34.944
+Avg stage-1 decoder us      : 161214.060
+Avg GRAND decoder us        : 62.995
+Avg total hybrid decoder us : 161277.055
+[SAVE] summary=results/run_hybrid_ldpc_grand_tgds_20260402_it15_31530296_1/tgds_it15_20260403-153726_summary.csv
+[SAVE] raw=results/run_hybrid_ldpc_grand_tgds_20260402_it15_31530296_1/tgds_it15_20260403-153726_raw.pkl
+[SAVE] config=results/run_hybrid_ldpc_grand_tgds_20260402_it15_31530296_1/tgds_it15_20260403-153726_config.json
+[SAVE] model=results/run_hybrid_ldpc_grand_tgds_20260402_it15_31530296_1/tgds_student_it15.npz
