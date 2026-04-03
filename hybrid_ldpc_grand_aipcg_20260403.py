@@ -176,40 +176,37 @@ class MCConfig:
 
 @dataclass
 class CalibrationConfig:
-    target_failed_frames: int = 96
-    max_frames: int = 50000
+    target_failed_frames: int = 192
+    max_frames: int = 90000
     neg_ratio: float = 6.0
-    hard_negative_cap: int = 64
-    teacher_hidden: int = 32
-    teacher_epochs: int = 18
-    student_epochs: int = 16
+    hard_negative_cap: int = 96
+    teacher_hidden: int = 48
+    teacher_epochs: int = 20
+    student_epochs: int = 18
     batch_size: int = 4096
     teacher_lr: float = 0.01
     student_lr: float = 0.025
     temperature: float = 2.5
 
-
 @dataclass
 class HybridConfig:
-    global_pool: int = 14
-    llr_pool: int = 14
-    gain_pool: int = 14
-    osc_pool: int = 10
-    union_cap: int = 24
-    roi_local_cap: int = 10
-    max_rois: int = 4
-    tiny_budget: int = 32
-    mid_budget: int = 128
-    full_budget: int = 384
-    tiny_wmax: int = 2
-    mid_wmax: int = 3
-    full_wmax: int = 4
+    tx_info_pool: int = 14
+    tx_parity_pool: int = 12
+    latent_pool: int = 10
+    local_touch_cap: int = 10
+    phase1_max_depth: int = 6
+    phase2_max_depth: int = 3
+    phase1_beam: int = 18
+    phase2_beam: int = 12
+    max_patterns: int = 1536
     ai_weight: float = 1.35
     gain_weight: float = 0.22
     osc_weight: float = 0.16
-    compact_weight: float = 0.10
     llr_weight: float = 1.0
-
+    sw_weight: float = 1.20
+    info_bonus: float = 0.55
+    tx_bonus: float = 0.18
+    latent_penalty: float = 0.45
 
 @dataclass
 class RunConfig:
@@ -551,6 +548,25 @@ def build_sionna_5g_nr_code_cfg(k_info: int, n_tx: int, num_bits_per_symbol: int
         "out_int_inv": out_int_inv,
     }
     code_cfg.sionna["tx_pos"] = _sionna5g_internal_tx_positions(code_cfg)
+    tx_mask = np.zeros(code_cfg.N, dtype=np.uint8)
+    tx_mask[np.asarray(code_cfg.sionna["tx_pos"], dtype=np.int32)] = 1
+    info_mask = np.zeros(code_cfg.N, dtype=np.uint8)
+    info_mask[: code_cfg.K] = 1
+    filler_mask = np.zeros(code_cfg.N, dtype=np.uint8)
+    k_filler = int(code_cfg.sionna.get("k_filler", 0))
+    if k_filler > 0:
+        filler_mask[code_cfg.K : code_cfg.K + k_filler] = 1
+    tx_info_mask = (tx_mask & info_mask).astype(np.uint8)
+    tx_parity_mask = (tx_mask & (1 - info_mask) & (1 - filler_mask)).astype(np.uint8)
+    latent_mask = ((1 - tx_mask) & (1 - filler_mask)).astype(np.uint8)
+    punctured_info_mask = ((1 - tx_mask) & info_mask).astype(np.uint8)
+    code_cfg._tx_mask = tx_mask
+    code_cfg._info_mask = info_mask
+    code_cfg._tx_info_mask = tx_info_mask
+    code_cfg._tx_parity_mask = tx_parity_mask
+    code_cfg._latent_mask = latent_mask
+    code_cfg._punctured_info_mask = punctured_info_mask
+    code_cfg._filler_mask = filler_mask
     prepare_code_for_fast_decoding(code_cfg)
     _prepare_static_graph_features(code_cfg)
     return code_cfg
@@ -936,8 +952,13 @@ FEATURE_NAMES = [
     "global_synd_ratio",
     "global_mean_abs",
     "global_flip_ratio",
+    "is_tx",
+    "is_info",
+    "is_tx_info",
+    "is_tx_parity",
+    "is_latent",
 ]
-
+FEATURE_INDEX = {name: i for i, name in enumerate(FEATURE_NAMES)}
 
 def _snapshot_pick(snapshots: Dict[str, Dict[int, np.ndarray]], wanted: int, fallback: np.ndarray) -> np.ndarray:
     if wanted in snapshots["llr"]:
@@ -1012,11 +1033,15 @@ def _feature_pack(code_cfg: CodeConfig, llr_final: np.ndarray, hard_final: np.nd
             np.full(code_cfg.N, global_synd_ratio, dtype=np.float32),
             np.full(code_cfg.N, global_mean_abs, dtype=np.float32),
             np.full(code_cfg.N, global_flip_ratio, dtype=np.float32),
+            code_cfg._tx_mask.astype(np.float32),
+            code_cfg._info_mask.astype(np.float32),
+            code_cfg._tx_info_mask.astype(np.float32),
+            code_cfg._tx_parity_mask.astype(np.float32),
+            code_cfg._latent_mask.astype(np.float32),
         ],
         axis=1,
     ).astype(np.float32)
     return feat
-
 
 def _collect_training_rows(feat: np.ndarray, labels: np.ndarray, llr_final: np.ndarray, syndrome_final: np.ndarray, cfg: CalibrationConfig, seed: int):
     rng = np.random.default_rng(int(seed))
@@ -1024,9 +1049,15 @@ def _collect_training_rows(feat: np.ndarray, labels: np.ndarray, llr_final: np.n
     if pos.size == 0:
         return None
     abs_llr = np.abs(llr_final)
-    bit_degree = np.maximum(1.0, feat[:, 6] * 0 + 1.0)  # placeholder to keep shapes simple
-    # Hard negatives: wrong-looking but not true errors
-    score = (1.0 / (1.0 + abs_llr)) + 0.8 * feat[:, 6] + 0.6 * feat[:, 4]
+    tx_info = feat[:, FEATURE_INDEX["is_tx_info"]]
+    latent = feat[:, FEATURE_INDEX["is_latent"]]
+    score = (
+        (1.0 / (1.0 + abs_llr))
+        + 0.80 * feat[:, FEATURE_INDEX["unsat_frac"]]
+        + 0.60 * feat[:, FEATURE_INDEX["flip_rate"]]
+        + 0.35 * tx_info
+        - 0.15 * latent
+    )
     cand = np.argsort(-score)
     zero_mask = labels == 0
     hard_neg = cand[zero_mask[cand]] if cand.size else np.array([], dtype=np.int64)
@@ -1044,9 +1075,10 @@ def _collect_training_rows(feat: np.ndarray, labels: np.ndarray, llr_final: np.n
     keep = np.unique(keep)
     X = feat[keep].astype(np.float32)
     y = labels[keep].astype(np.float32)
-    w = np.where(y > 0.5, np.float32(1.0), np.float32(0.35)).astype(np.float32)
+    tx_info_keep = tx_info[keep].astype(np.float32)
+    latent_keep = latent[keep].astype(np.float32)
+    w = np.where(y > 0.5, 1.0 + 0.55 * tx_info_keep, 0.32 + 0.05 * (1.0 - latent_keep)).astype(np.float32)
     return X, y, w
-
 
 def train_ai_ranker(rows: List[Tuple[np.ndarray, np.ndarray, np.ndarray]], cfg: CalibrationConfig, seed: int) -> Optional[DistilledLinearStudent]:
     if not rows:
@@ -1109,189 +1141,321 @@ def student_prob(student: Optional[DistilledLinearStudent], feat: np.ndarray) ->
 
 
 # ------------------------- AI-guided GRAND -------------------------
-def _candidate_union(code_cfg: CodeConfig, hard_final: np.ndarray, llr_final: np.ndarray, syndrome_final: np.ndarray, ai_prob_vec: np.ndarray, feat: np.ndarray, cfg: HybridConfig) -> List[int]:
-    hard_idx = np.flatnonzero(hard_final > 0)
-    if hard_idx.size == 0:
+def _bit_search_base_score(code_cfg: CodeConfig, llr_final: np.ndarray, ai_prob_vec: np.ndarray, feat: np.ndarray, cfg: HybridConfig) -> np.ndarray:
+    score = (
+        ai_prob_vec
+        + float(cfg.gain_weight) * feat[:, FEATURE_INDEX["gain_norm"]]
+        + float(cfg.osc_weight) * feat[:, FEATURE_INDEX["flip_rate"]]
+        + 0.28 * feat[:, FEATURE_INDEX["inv_abs_llr"]]
+        + float(cfg.tx_bonus) * feat[:, FEATURE_INDEX["is_tx"]]
+        + 0.60 * float(cfg.info_bonus) * feat[:, FEATURE_INDEX["is_tx_info"]]
+        - 0.50 * float(cfg.latent_penalty) * feat[:, FEATURE_INDEX["is_latent"]]
+    )
+    return score.astype(np.float32)
+
+
+def _sorted_pool(indices: np.ndarray, base_score: np.ndarray, llr_final: np.ndarray, take: int) -> List[int]:
+    if indices.size == 0:
         return []
-    abs_llr = np.abs(llr_final)
-    score = ai_prob_vec + float(cfg.gain_weight) * feat[:, 7] + float(cfg.osc_weight) * feat[:, 4]
-    gain_rank = np.argsort(-(feat[hard_idx, 7] + 0.25 * ai_prob_vec[hard_idx]))
-    ai_rank = np.argsort(-score[hard_idx])
-    llr_rank = np.argsort(abs_llr[hard_idx])
-    osc_rank = np.argsort(-(feat[hard_idx, 4] + 0.25 * ai_prob_vec[hard_idx]))
-    out: List[int] = []
-    seen = set()
-    for arr, take in (
-        (ai_rank, cfg.global_pool),
-        (llr_rank, cfg.llr_pool),
-        (gain_rank, cfg.gain_pool),
-        (osc_rank, cfg.osc_pool),
-    ):
-        for idx in arr[:int(take)]:
-            v = int(hard_idx[int(idx)])
+    order = sorted(indices.tolist(), key=lambda v: (-float(base_score[int(v)]), float(np.abs(llr_final[int(v)])), int(v)))
+    return [int(v) for v in order[: int(max(0, take))]]
+
+
+def _domain_pools(code_cfg: CodeConfig, hard_final: np.ndarray, llr_final: np.ndarray, syndrome_final: np.ndarray, ai_prob_vec: np.ndarray, feat: np.ndarray, cfg: HybridConfig):
+    hard_mask = hard_final.astype(bool)
+    searchable = hard_mask & (~code_cfg._filler_mask.astype(bool))
+    base_score = _bit_search_base_score(code_cfg, llr_final, ai_prob_vec, feat, cfg)
+
+    info_idx = np.flatnonzero(searchable & code_cfg._tx_info_mask.astype(bool))
+    tx_par_idx = np.flatnonzero(searchable & code_cfg._tx_parity_mask.astype(bool))
+    latent_idx = np.flatnonzero(searchable & code_cfg._latent_mask.astype(bool))
+    punctured_info_idx = np.flatnonzero(searchable & code_cfg._punctured_info_mask.astype(bool))
+
+    info_pool = _sorted_pool(info_idx, base_score, llr_final, int(cfg.tx_info_pool))
+    tx_par_pool = _sorted_pool(tx_par_idx, base_score, llr_final, int(cfg.tx_parity_pool))
+    latent_pool = _sorted_pool(latent_idx, base_score, llr_final, int(cfg.latent_pool))
+
+    # If very few transmitted info anchors are available, allow punctured info only as late helpers.
+    if len(info_pool) < max(4, int(cfg.tx_info_pool) // 2):
+        extra = _sorted_pool(punctured_info_idx, base_score, llr_final, max(0, int(cfg.latent_pool) - len(latent_pool)))
+        seen = set(latent_pool)
+        for v in extra:
             if v not in seen:
+                latent_pool.append(v)
                 seen.add(v)
-                out.append(v)
-            if len(out) >= int(cfg.union_cap):
-                return out
-    return out
+    return info_pool, tx_par_pool, latent_pool, base_score
 
 
-def _shared_unsat_counts(code_cfg: CodeConfig, union_bits: List[int], syndrome_final: np.ndarray) -> np.ndarray:
-    m = len(union_bits)
-    shared = np.zeros((m, m), dtype=np.int32)
-    unsat = syndrome_final.astype(bool)
-    bit_to_pos = {v: i for i, v in enumerate(union_bits)}
-    for c in np.flatnonzero(unsat):
-        loc = [bit_to_pos[int(v)] for v in code_cfg.checks_to_vars[int(c)] if int(v) in bit_to_pos]
-        for i in range(len(loc)):
-            for j in range(i + 1, len(loc)):
-                shared[loc[i], loc[j]] += 1
-                shared[loc[j], loc[i]] += 1
-    return shared
-
-
-def _roi_components(shared: np.ndarray) -> List[List[int]]:
-    m = shared.shape[0]
-    seen = np.zeros(m, dtype=np.uint8)
-    comps: List[List[int]] = []
-    for i in range(m):
-        if seen[i]:
-            continue
-        stack = [i]
-        seen[i] = 1
-        comp = []
-        while stack:
-            u = stack.pop()
-            comp.append(u)
-            nbrs = np.flatnonzero(shared[u] > 0)
-            for v in nbrs:
-                if not seen[v]:
-                    seen[v] = 1
-                    stack.append(int(v))
-        comps.append(comp)
-    return comps
-
-
-def _apply_pattern_syndrome(syndrome: np.ndarray, pattern: Tuple[int, ...], code_cfg: CodeConfig) -> np.ndarray:
+def _toggle_single_bit_syndrome(syndrome: np.ndarray, v: int, code_cfg: CodeConfig) -> np.ndarray:
     s = syndrome.copy()
-    for v in pattern:
-        for c in code_cfg.vars_to_checks[int(v)]:
-            s[int(c)] ^= 1
+    for c in code_cfg.vars_to_checks[int(v)]:
+        s[int(c)] ^= 1
     return s
 
 
-def _pattern_metric(pattern: Tuple[int, ...], llr_final: np.ndarray, ai_prob_vec: np.ndarray, shared_lookup: Dict[Tuple[int, int], int], cfg: HybridConfig) -> float:
-    llr_cost = float(np.sum(np.abs(llr_final[list(pattern)])))
-    ai_bonus = float(np.sum(ai_prob_vec[list(pattern)]))
-    compact = 0.0
-    if len(pattern) >= 2:
-        for a, b in itertools.combinations(pattern, 2):
-            compact += float(shared_lookup.get((min(a, b), max(a, b)), 0))
-    return float(cfg.llr_weight) * llr_cost - float(cfg.ai_weight) * ai_bonus - float(cfg.compact_weight) * compact
+def _touch_count_for_bit(syndrome: np.ndarray, v: int, code_cfg: CodeConfig) -> int:
+    cnt = 0
+    for c in code_cfg.vars_to_checks[int(v)]:
+        if syndrome[int(c)]:
+            cnt += 1
+    return cnt
 
 
-def ai_guided_grand(code_cfg: CodeConfig, hard_final: np.ndarray, llr_final: np.ndarray, syndrome_final: np.ndarray, ai_prob_vec: np.ndarray, feat: np.ndarray, cfg: HybridConfig):
-    union_bits = _candidate_union(code_cfg, hard_final, llr_final, syndrome_final, ai_prob_vec, feat, cfg)
-    if not union_bits:
-        return {
-            "success": False,
-            "bits": hard_final,
-            "patterns_tested": 0,
-            "union_bits": [],
-            "budget": 0,
-            "wmax": 0,
-            "trigger_mode": "empty",
-        }
-    shared = _shared_unsat_counts(code_cfg, union_bits, syndrome_final)
-    comps = _roi_components(shared)
-    score = ai_prob_vec + float(cfg.gain_weight) * feat[:, 7] + float(cfg.osc_weight) * feat[:, 4]
-    comp_scored = []
-    for comp in comps:
-        bits = [union_bits[i] for i in comp]
-        bits = sorted(bits, key=lambda v: (-score[v], np.abs(llr_final[v])))
-        comp_score = float(np.mean(score[bits])) + 0.05 * float(len(bits) <= int(cfg.roi_local_cap))
-        comp_scored.append((comp_score, bits))
-    comp_scored.sort(key=lambda x: -x[0])
-    topk = min(4, len(union_bits))
-    top_conf = float(np.mean(np.sort(score[union_bits])[-topk:])) if topk > 0 else 0.0
-    synd_w = int(np.sum(syndrome_final))
-    if synd_w <= 8 and top_conf >= 0.42:
-        budget = int(cfg.full_budget)
-        wmax = int(cfg.full_wmax)
-        trigger_mode = "full"
-    elif synd_w <= 18 and top_conf >= 0.28:
-        budget = int(cfg.mid_budget)
-        wmax = int(cfg.mid_wmax)
-        trigger_mode = "mid"
+def _state_metric(sw_after: int, llr_cost: float, ai_bonus: float, info_count: int, tx_count: int, latent_count: int, cfg: HybridConfig) -> float:
+    return (
+        float(cfg.sw_weight) * float(sw_after)
+        + float(cfg.llr_weight) * float(llr_cost)
+        - float(cfg.ai_weight) * float(ai_bonus)
+        - float(cfg.info_bonus) * float(info_count)
+        - float(cfg.tx_bonus) * float(tx_count)
+        + float(cfg.latent_penalty) * float(latent_count)
+    )
+
+
+def _beam_phase(
+    phase_name: str,
+    code_cfg: CodeConfig,
+    hard_final: np.ndarray,
+    llr_final: np.ndarray,
+    syndrome_final: np.ndarray,
+    ai_prob_vec: np.ndarray,
+    feat: np.ndarray,
+    cfg: HybridConfig,
+    info_pool: List[int],
+    tx_par_pool: List[int],
+    latent_pool: List[int],
+    require_info: bool,
+    max_depth: int,
+    beam_width: int,
+    pattern_budget: int,
+):
+    if phase_name == "info_first":
+        depth_pools = []
+        depth_pools.append(list(info_pool))
+        depth_pools.append(list(dict.fromkeys(info_pool + tx_par_pool[: max(4, len(tx_par_pool))])))
+        merged = list(dict.fromkeys(info_pool + tx_par_pool + latent_pool))
+        for _ in range(2, max_depth):
+            depth_pools.append(list(merged))
     else:
-        budget = int(cfg.tiny_budget)
-        wmax = int(cfg.tiny_wmax)
-        trigger_mode = "tiny"
+        merged = list(dict.fromkeys(tx_par_pool + latent_pool))
+        depth_pools = [list(merged) for _ in range(max_depth)]
 
-    shared_lookup: Dict[Tuple[int, int], int] = {}
-    for i, a in enumerate(union_bits):
-        for j in range(i + 1, len(union_bits)):
-            b = union_bits[j]
-            val = int(shared[i, j])
-            if val > 0:
-                shared_lookup[(min(a, b), max(a, b))] = val
-
-    patterns = []
-    seen = set()
-
-    # ROI-first enumeration
-    for _, bits in comp_scored[: int(cfg.max_rois)]:
-        local = bits[: int(cfg.roi_local_cap)]
-        for w in range(1, min(wmax, len(local)) + 1):
-            for comb in itertools.combinations(local, w):
-                if comb in seen:
-                    continue
-                seen.add(comb)
-                s_after = _apply_pattern_syndrome(syndrome_final, comb, code_cfg)
-                sw_after = int(np.sum(s_after))
-                metric = _pattern_metric(comb, llr_final, ai_prob_vec, shared_lookup, cfg)
-                patterns.append((sw_after, metric, len(comb), comb))
-
-    # Global complementary lists
-    global_sorted = sorted(union_bits, key=lambda v: (-score[v], np.abs(llr_final[v])))
-    for w in range(1, min(wmax, len(global_sorted)) + 1):
-        for comb in itertools.combinations(global_sorted, w):
-            if comb in seen:
-                continue
-            seen.add(comb)
-            s_after = _apply_pattern_syndrome(syndrome_final, comb, code_cfg)
-            sw_after = int(np.sum(s_after))
-            metric = _pattern_metric(comb, llr_final, ai_prob_vec, shared_lookup, cfg)
-            patterns.append((sw_after, metric, len(comb), comb))
-
-    patterns.sort(key=lambda x: (x[0], x[1], x[2]))
+    init = {
+        "pattern": tuple(),
+        "syndrome": syndrome_final.copy(),
+        "llr_cost": 0.0,
+        "ai_bonus": 0.0,
+        "info_count": 0,
+        "tx_count": 0,
+        "latent_count": 0,
+        "metric": _state_metric(int(np.sum(syndrome_final)), 0.0, 0.0, 0, 0, 0, cfg),
+    }
+    beam = [init]
     tested = 0
-    for sw_after, _, _, comb in patterns[:budget]:
-        tested += 1
-        if sw_after == 0:
-            bits = hard_final.copy()
-            bits[list(comb)] ^= 1
-            return {
-                "success": True,
-                "bits": bits,
-                "patterns_tested": tested,
-                "union_bits": union_bits,
-                "budget": budget,
-                "wmax": wmax,
-                "trigger_mode": trigger_mode,
-            }
+    seen_global = {tuple()}
+
+    for depth in range(1, int(max_depth) + 1):
+        pool = depth_pools[min(depth - 1, len(depth_pools) - 1)] if depth_pools else []
+        if not pool:
+            break
+        next_states = []
+        seen_local = set()
+        for state in beam:
+            if tested >= int(pattern_budget):
+                break
+            used = set(state["pattern"])
+            cand_rank = []
+            sw_now = int(np.sum(state["syndrome"]))
+            for v in pool:
+                if v in used:
+                    continue
+                touch = _touch_count_for_bit(state["syndrome"], int(v), code_cfg)
+                if touch <= 0:
+                    continue
+                s_after = _toggle_single_bit_syndrome(state["syndrome"], int(v), code_cfg)
+                sw_after = int(np.sum(s_after))
+                delta_sw = sw_now - sw_after
+                local_key = (
+                    -touch,
+                    -delta_sw,
+                    -float(ai_prob_vec[int(v)]),
+                    float(np.abs(llr_final[int(v)])),
+                    int(v),
+                )
+                cand_rank.append((local_key, int(v), s_after, sw_after))
+            if not cand_rank:
+                for v in pool:
+                    if v in used:
+                        continue
+                    s_after = _toggle_single_bit_syndrome(state["syndrome"], int(v), code_cfg)
+                    sw_after = int(np.sum(s_after))
+                    local_key = (
+                        0,
+                        -(sw_now - sw_after),
+                        -float(ai_prob_vec[int(v)]),
+                        float(np.abs(llr_final[int(v)])),
+                        int(v),
+                    )
+                    cand_rank.append((local_key, int(v), s_after, sw_after))
+            cand_rank.sort(key=lambda x: x[0])
+            for _, v, s_after, sw_after in cand_rank[: int(cfg.local_touch_cap)]:
+                if tested >= int(pattern_budget):
+                    break
+                pattern = tuple(sorted(state["pattern"] + (int(v),)))
+                if pattern in seen_global or pattern in seen_local:
+                    continue
+                llr_cost = float(state["llr_cost"] + float(np.abs(llr_final[int(v)])))
+                ai_bonus = float(state["ai_bonus"] + float(ai_prob_vec[int(v)]))
+                info_count = int(state["info_count"] + int(code_cfg._tx_info_mask[int(v)]))
+                tx_count = int(state["tx_count"] + int(code_cfg._tx_mask[int(v)]))
+                latent_count = int(state["latent_count"] + int(code_cfg._latent_mask[int(v)]))
+                metric = _state_metric(sw_after, llr_cost, ai_bonus, info_count, tx_count, latent_count, cfg)
+                tested += 1
+                seen_local.add(pattern)
+                seen_global.add(pattern)
+                if sw_after == 0 and ((not require_info) or info_count > 0):
+                    bits = hard_final.copy()
+                    bits[list(pattern)] ^= 1
+                    return {
+                        "success": True,
+                        "bits": bits,
+                        "patterns_tested": tested,
+                        "phase": phase_name,
+                        "pattern": pattern,
+                        "info_count": info_count,
+                        "tx_count": tx_count,
+                        "latent_count": latent_count,
+                    }
+                next_states.append(
+                    {
+                        "pattern": pattern,
+                        "syndrome": s_after,
+                        "llr_cost": llr_cost,
+                        "ai_bonus": ai_bonus,
+                        "info_count": info_count,
+                        "tx_count": tx_count,
+                        "latent_count": latent_count,
+                        "metric": metric,
+                    }
+                )
+        if not next_states or tested >= int(pattern_budget):
+            break
+        next_states.sort(
+            key=lambda st: (
+                int(np.sum(st["syndrome"])),
+                float(st["metric"]),
+                -int(st["info_count"]),
+                -int(st["tx_count"]),
+                len(st["pattern"]),
+            )
+        )
+        beam = next_states[: int(max(1, beam_width))]
     return {
         "success": False,
         "bits": hard_final,
         "patterns_tested": tested,
-        "union_bits": union_bits,
-        "budget": budget,
-        "wmax": wmax,
-        "trigger_mode": trigger_mode,
+        "phase": phase_name,
+        "pattern": tuple(),
+        "info_count": 0,
+        "tx_count": 0,
+        "latent_count": 0,
     }
 
 
+def ai_guided_grand(code_cfg: CodeConfig, hard_final: np.ndarray, llr_final: np.ndarray, syndrome_final: np.ndarray, ai_prob_vec: np.ndarray, feat: np.ndarray, cfg: HybridConfig):
+    info_pool, tx_par_pool, latent_pool, base_score = _domain_pools(code_cfg, hard_final, llr_final, syndrome_final, ai_prob_vec, feat, cfg)
+    if not info_pool and not tx_par_pool and not latent_pool:
+        return {
+            "success": False,
+            "bits": hard_final,
+            "patterns_tested": 0,
+            "phase1_tested": 0,
+            "phase2_tested": 0,
+            "success_phase": "empty",
+            "pool_info": 0,
+            "pool_tx_parity": 0,
+            "pool_latent": 0,
+            "pattern": tuple(),
+        }
+
+    phase1_budget = max(32, int(round(0.78 * int(cfg.max_patterns))))
+    phase2_budget = max(16, int(cfg.max_patterns) - phase1_budget)
+    res1 = _beam_phase(
+        "info_first",
+        code_cfg,
+        hard_final,
+        llr_final,
+        syndrome_final,
+        ai_prob_vec,
+        feat,
+        cfg,
+        info_pool,
+        tx_par_pool,
+        latent_pool,
+        require_info=True,
+        max_depth=int(cfg.phase1_max_depth),
+        beam_width=int(cfg.phase1_beam),
+        pattern_budget=phase1_budget,
+    )
+    if res1["success"]:
+        res1.update(
+            {
+                "phase1_tested": int(res1["patterns_tested"]),
+                "phase2_tested": 0,
+                "success_phase": "info_first",
+                "pool_info": len(info_pool),
+                "pool_tx_parity": len(tx_par_pool),
+                "pool_latent": len(latent_pool),
+            }
+        )
+        return res1
+
+    res2 = _beam_phase(
+        "parity_cleanup",
+        code_cfg,
+        hard_final,
+        llr_final,
+        syndrome_final,
+        ai_prob_vec,
+        feat,
+        cfg,
+        info_pool,
+        tx_par_pool,
+        latent_pool,
+        require_info=False,
+        max_depth=int(cfg.phase2_max_depth),
+        beam_width=int(cfg.phase2_beam),
+        pattern_budget=phase2_budget,
+    )
+    if res2["success"]:
+        res2.update(
+            {
+                "phase1_tested": int(res1["patterns_tested"]),
+                "phase2_tested": int(res2["patterns_tested"]),
+                "patterns_tested": int(res1["patterns_tested"] + res2["patterns_tested"]),
+                "success_phase": "parity_cleanup",
+                "pool_info": len(info_pool),
+                "pool_tx_parity": len(tx_par_pool),
+                "pool_latent": len(latent_pool),
+            }
+        )
+        return res2
+
+    return {
+        "success": False,
+        "bits": hard_final,
+        "patterns_tested": int(res1["patterns_tested"] + res2["patterns_tested"]),
+        "phase1_tested": int(res1["patterns_tested"]),
+        "phase2_tested": int(res2["patterns_tested"]),
+        "success_phase": "none",
+        "pool_info": len(info_pool),
+        "pool_tx_parity": len(tx_par_pool),
+        "pool_latent": len(latent_pool),
+        "pattern": tuple(),
+    }
+
+
+# ------------------------- Calibration -------------------------
 # ------------------------- Calibration -------------------------
 def _warmup(code_cfg: CodeConfig, stage1_iters: int):
     llr = np.ones(code_cfg.N, dtype=np.float32)
@@ -1357,7 +1521,16 @@ def evaluate_one_snr(run_cfg: RunConfig, code_cfg: CodeConfig, snr_db: float, st
     stage1_iter_sum = 0
     grand_invocations = 0
     grand_rescues = 0
+    grand_info_rescues = 0
+    grand_parity_only_rescues = 0
+    phase1_successes = 0
+    phase2_successes = 0
     grand_patterns_total = 0
+    grand_phase1_patterns_total = 0
+    grand_phase2_patterns_total = 0
+    pool_info_total = 0
+    pool_tx_parity_total = 0
+    pool_latent_total = 0
     stage1_time = 0.0
     grand_time = 0.0
 
@@ -1383,13 +1556,28 @@ def evaluate_one_snr(run_cfg: RunConfig, code_cfg: CodeConfig, snr_db: float, st
             res = ai_guided_grand(code_cfg, hard, llr_post, synd, prob, feat, run_cfg.hybrid)
             grand_time += time.perf_counter() - t1
             grand_patterns_total += int(res["patterns_tested"])
+            grand_phase1_patterns_total += int(res.get("phase1_tested", 0))
+            grand_phase2_patterns_total += int(res.get("phase2_tested", 0))
+            pool_info_total += int(res.get("pool_info", 0))
+            pool_tx_parity_total += int(res.get("pool_tx_parity", 0))
+            pool_latent_total += int(res.get("pool_latent", 0))
             if res["success"]:
                 final_bits = res["bits"]
                 grand_rescues += 1
+                if res.get("success_phase", "") == "info_first":
+                    phase1_successes += 1
+                elif res.get("success_phase", "") == "parity_cleanup":
+                    phase2_successes += 1
         e_hyb = _info_errors(final_bits, code_cfg)
         hyb_bit_errors += e_hyb
         hyb_synd = compute_syndrome(final_bits.astype(np.uint8), code_cfg)
         hyb_frame_errors += int(e_hyb > 0 or int(np.sum(hyb_synd)) != 0)
+
+        if int(np.sum(synd)) != 0 and int(np.sum(hyb_synd)) == 0:
+            if e_hyb < e_ldpc:
+                grand_info_rescues += 1
+            elif e_ldpc == 0 and e_hyb == 0:
+                grand_parity_only_rescues += 1
 
         frames += 1
         if frames >= int(run_cfg.mc.min_frames):
@@ -1407,14 +1595,23 @@ def evaluate_one_snr(run_cfg: RunConfig, code_cfg: CodeConfig, snr_db: float, st
         "avg_stage1_iters": float(stage1_iter_sum / frames) if frames > 0 else 0.0,
         "grand_invocation_rate": float(grand_invocations / frames) if frames > 0 else 0.0,
         "grand_rescue_rate_given_invoked": float(grand_rescues / grand_invocations) if grand_invocations > 0 else 0.0,
+        "grand_info_rescue_rate_given_invoked": float(grand_info_rescues / grand_invocations) if grand_invocations > 0 else 0.0,
+        "grand_parity_only_rescue_rate_given_invoked": float(grand_parity_only_rescues / grand_invocations) if grand_invocations > 0 else 0.0,
+        "grand_phase1_success_rate_given_invoked": float(phase1_successes / grand_invocations) if grand_invocations > 0 else 0.0,
+        "grand_phase2_success_rate_given_invoked": float(phase2_successes / grand_invocations) if grand_invocations > 0 else 0.0,
         "avg_grand_patterns_per_failed_frame": float(grand_patterns_total / grand_invocations) if grand_invocations > 0 else 0.0,
+        "avg_phase1_patterns_per_failed_frame": float(grand_phase1_patterns_total / grand_invocations) if grand_invocations > 0 else 0.0,
+        "avg_phase2_patterns_per_failed_frame": float(grand_phase2_patterns_total / grand_invocations) if grand_invocations > 0 else 0.0,
+        "avg_info_pool_per_failed_frame": float(pool_info_total / grand_invocations) if grand_invocations > 0 else 0.0,
+        "avg_tx_parity_pool_per_failed_frame": float(pool_tx_parity_total / grand_invocations) if grand_invocations > 0 else 0.0,
+        "avg_latent_pool_per_failed_frame": float(pool_latent_total / grand_invocations) if grand_invocations > 0 else 0.0,
         "avg_grand_patterns_per_frame": float(grand_patterns_total / frames) if frames > 0 else 0.0,
         "avg_stage1_decoder_us": float(1e6 * stage1_time / frames) if frames > 0 else 0.0,
         "avg_grand_decoder_us": float(1e6 * grand_time / frames) if frames > 0 else 0.0,
         "avg_total_hybrid_decoder_us": float(1e6 * (stage1_time + grand_time) / frames) if frames > 0 else 0.0,
     }
 
-
+# ------------------------- Save helpers -------------------------
 # ------------------------- Save helpers -------------------------
 def save_summary_csv(rows: List[Dict[str, Any]], path: str):
     if not rows:
@@ -1441,46 +1638,45 @@ def build_run_config(results_dir: str) -> RunConfig:
     qm = _env_int("SIONNA_5G_QM", 1)
     alpha = _env_float("LDPC_ALPHA", 0.80)
     eval_snr_db = _env_csv_floats("EVAL_SNR_SWEEP", "10.5,11.0,11.5,12.0")
-    calib_snr_db = _env_csv_floats("CALIB_SNR_SWEEP", ",".join(str(x) for x in eval_snr_db[: max(2, min(4, len(eval_snr_db)))]))
+    calib_snr_db = _env_csv_floats("CALIB_SNR_SWEEP", ",".join(str(x) for x in eval_snr_db[: max(3, min(5, len(eval_snr_db)))]))
     mc = MCConfig(
         target_frame_errors=_env_int("TARGET_FRAME_ERRORS", 150),
         max_frames=_env_int("MAX_FRAMES", 120000),
         min_frames=_env_int("MIN_FRAMES", 0),
     )
     calib = CalibrationConfig(
-        target_failed_frames=_env_int("CALIB_TARGET_FAILED_FRAMES", 96),
-        max_frames=_env_int("CALIB_MAX_FRAMES", 50000),
+        target_failed_frames=_env_int("CALIB_TARGET_FAILED_FRAMES", 192),
+        max_frames=_env_int("CALIB_MAX_FRAMES", 90000),
         neg_ratio=_env_float("CALIB_NEG_RATIO", 6.0),
-        hard_negative_cap=_env_int("CALIB_HARD_NEG_CAP", 64),
-        teacher_hidden=_env_int("AI_TEACHER_HIDDEN", 32),
-        teacher_epochs=_env_int("AI_TEACHER_EPOCHS", 18),
-        student_epochs=_env_int("AI_STUDENT_EPOCHS", 16),
+        hard_negative_cap=_env_int("CALIB_HARD_NEG_CAP", 96),
+        teacher_hidden=_env_int("AI_TEACHER_HIDDEN", 48),
+        teacher_epochs=_env_int("AI_TEACHER_EPOCHS", 20),
+        student_epochs=_env_int("AI_STUDENT_EPOCHS", 18),
         batch_size=_env_int("AI_BATCH_SIZE", 4096),
         teacher_lr=_env_float("AI_TEACHER_LR", 0.01),
         student_lr=_env_float("AI_STUDENT_LR", 0.025),
         temperature=_env_float("AI_DISTILL_TEMP", 2.5),
     )
     hybrid = HybridConfig(
-        global_pool=_env_int("GRAND_GLOBAL_POOL", 14),
-        llr_pool=_env_int("GRAND_LLR_POOL", 14),
-        gain_pool=_env_int("GRAND_GAIN_POOL", 14),
-        osc_pool=_env_int("GRAND_OSC_POOL", 10),
-        union_cap=_env_int("GRAND_UNION_CAP", 24),
-        roi_local_cap=_env_int("GRAND_ROI_LOCAL_CAP", 10),
-        max_rois=_env_int("GRAND_MAX_ROIS", 4),
-        tiny_budget=_env_int("GRAND_TINY_BUDGET", 32),
-        mid_budget=_env_int("GRAND_MID_BUDGET", 128),
-        full_budget=_env_int("GRAND_FULL_BUDGET", 384),
-        tiny_wmax=_env_int("GRAND_TINY_WMAX", 2),
-        mid_wmax=_env_int("GRAND_MID_WMAX", 3),
-        full_wmax=_env_int("GRAND_FULL_WMAX", 4),
+        tx_info_pool=_env_int("GRAND_TX_INFO_POOL", 14),
+        tx_parity_pool=_env_int("GRAND_TX_PARITY_POOL", 12),
+        latent_pool=_env_int("GRAND_LATENT_POOL", 10),
+        local_touch_cap=_env_int("GRAND_LOCAL_TOUCH_CAP", 10),
+        phase1_max_depth=_env_int("GRAND_PHASE1_MAX_DEPTH", 6),
+        phase2_max_depth=_env_int("GRAND_PHASE2_MAX_DEPTH", 3),
+        phase1_beam=_env_int("GRAND_PHASE1_BEAM", 18),
+        phase2_beam=_env_int("GRAND_PHASE2_BEAM", 12),
+        max_patterns=_env_int("GRAND_MAX_PATTERNS", 1536),
         ai_weight=_env_float("GRAND_AI_WEIGHT", 1.35),
         gain_weight=_env_float("GRAND_GAIN_WEIGHT", 0.22),
         osc_weight=_env_float("GRAND_OSC_WEIGHT", 0.16),
-        compact_weight=_env_float("GRAND_COMPACT_WEIGHT", 0.10),
         llr_weight=_env_float("GRAND_LLR_WEIGHT", 1.0),
+        sw_weight=_env_float("GRAND_SW_WEIGHT", 1.20),
+        info_bonus=_env_float("GRAND_INFO_BONUS", 0.55),
+        tx_bonus=_env_float("GRAND_TX_BONUS", 0.18),
+        latent_penalty=_env_float("GRAND_LATENT_PENALTY", 0.45),
     )
-    base_seed = _env_int("RNG_SEED_GLOBAL", 20260402)
+    base_seed = _env_int("RNG_SEED_GLOBAL", 20260403)
     return RunConfig(
         results_dir=results_dir,
         stage1_iters=stage1_iters,
@@ -1514,7 +1710,7 @@ def main():
     code_cfg = build_sionna_5g_nr_code_cfg(run_cfg.k_info, run_cfg.n_tx, run_cfg.qm)
     _warmup(code_cfg, run_cfg.stage1_iters)
 
-    model_path = os.path.join(results_dir, f"tgds_student_it{run_cfg.stage1_iters:02d}.npz")
+    model_path = os.path.join(results_dir, f"aipcg_student_it{run_cfg.stage1_iters:02d}.npz")
     calib_meta = run_calibration(run_cfg, code_cfg, model_path)
     student = load_student(model_path) if calib_meta["model_ready"] else None
 
@@ -1524,7 +1720,7 @@ def main():
     for snr_db in run_cfg.eval_snr_db:
         res = evaluate_one_snr(run_cfg, code_cfg, float(snr_db), student)
         rows.append(res)
-        print("\n=== TGDS HYBRID EVAL ===")
+        print("\n=== AIPCG HYBRID EVAL ===")
         print(f"SNR (dB)                    : {res['snr_db']:.2f}")
         print(f"Frames simulated            : {res['frames']}")
         print(f"LDPC FER / BER              : {res['ldpc_fer']:.6e} / {res['ldpc_ber']:.6e}")
@@ -1532,12 +1728,17 @@ def main():
         print(f"Avg stage-1 iters/frame     : {res['avg_stage1_iters']:.3f}")
         print(f"GRAND invocation rate       : {res['grand_invocation_rate']:.6f}")
         print(f"GRAND rescue rate | invoked : {res['grand_rescue_rate_given_invoked']:.6f}")
+        print(f"Info rescue rate | invoked  : {res['grand_info_rescue_rate_given_invoked']:.6f}")
+        print(f"Parity-only rescue | invoked: {res['grand_parity_only_rescue_rate_given_invoked']:.6f}")
+        print(f"Phase1 / Phase2 success     : {res['grand_phase1_success_rate_given_invoked']:.6f} / {res['grand_phase2_success_rate_given_invoked']:.6f}")
+        print(f"Pools info/txp/latent       : {res['avg_info_pool_per_failed_frame']:.2f} / {res['avg_tx_parity_pool_per_failed_frame']:.2f} / {res['avg_latent_pool_per_failed_frame']:.2f}")
         print(f"Avg GRAND patterns/failure  : {res['avg_grand_patterns_per_failed_frame']:.3f}")
+        print(f"Avg phase1 / phase2 patterns: {res['avg_phase1_patterns_per_failed_frame']:.3f} / {res['avg_phase2_patterns_per_failed_frame']:.3f}")
         print(f"Avg stage-1 decoder us      : {res['avg_stage1_decoder_us']:.3f}")
         print(f"Avg GRAND decoder us        : {res['avg_grand_decoder_us']:.3f}")
         print(f"Avg total hybrid decoder us : {res['avg_total_hybrid_decoder_us']:.3f}")
 
-    prefix = f"tgds_it{run_cfg.stage1_iters:02d}_{_now_tag()}"
+    prefix = f"aipcg_it{run_cfg.stage1_iters:02d}_{_now_tag()}"
     summary_path = os.path.join(results_dir, f"{prefix}_summary.csv")
     raw_path = os.path.join(results_dir, f"{prefix}_raw.pkl")
     cfg_path = os.path.join(results_dir, f"{prefix}_config.json")

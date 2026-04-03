@@ -1,0 +1,111 @@
+{
+  "errors": {},
+  "python": "/scratch/rsadve1/venvs/grand5g/bin/python",
+  "status": {
+    "LDPC5GEncoder_ok": true,
+    "TDL_ok": true,
+    "numba_ok": true,
+    "numpy_ok": true,
+    "scipy_ok": true,
+    "sionna_ok": true
+  }
+}
+[SBATCH CONFIG] task=2 it=25 eval_snr=10.5,11.0,11.5,12.0,12.5 calib_snr=10.0,10.5,11.0,11.5
+[SBATCH CONFIG] channel=SIONNA_TDL tdl=C delay=3.0e-7 speed=[5.0,20.0] cfo=80.0 csi=nr_imperfect
+[SBATCH CONFIG] pools info/txp/latent=14/12/10 beam1/2=18/12 depth1/2=6/3 max_patterns=1536
+[RUN] code=sionna5g_k1024_n2048_qm1 it=25 eval_snr=[10.5, 11.0, 11.5, 12.0, 12.5]
+[RUN] calib={'calib_total_frames': 6024, 'calib_failed_frames': 192, 'model_ready': True, 'model_path': 'results/run_hybrid_ldpc_grand_aipcg_20260403_it25_31722905_2/aipcg_student_it25.npz'}
+
+=== AIPCG HYBRID EVAL ===
+SNR (dB)                    : 10.50
+Frames simulated            : 6200
+LDPC FER / BER              : 2.435484e-02 / 4.996220e-03
+Hybrid FER / BER            : 2.419355e-02 / 4.996220e-03
+Avg stage-1 iters/frame     : 5.130
+GRAND invocation rate       : 0.024355
+GRAND rescue rate | invoked : 0.006623
+Info rescue rate | invoked  : 0.000000
+Parity-only rescue | invoked: 0.006623
+Phase1 / Phase2 success     : 0.000000 / 0.006623
+Pools info/txp/latent       : 13.68 / 11.83 / 9.92
+Avg GRAND patterns/failure  : 697.404
+Avg phase1 / phase2 patterns: 560.298 / 137.106
+Avg stage-1 decoder us      : 14468.856
+Avg GRAND decoder us        : 669.928
+Avg total hybrid decoder us : 15138.784
+
+=== AIPCG HYBRID EVAL ===
+SNR (dB)                    : 11.00
+Frames simulated            : 6994
+LDPC FER / BER              : 2.144695e-02 / 4.161631e-03
+Hybrid FER / BER            : 2.144695e-02 / 4.161631e-03
+Avg stage-1 iters/frame     : 4.897
+GRAND invocation rate       : 0.021447
+GRAND rescue rate | invoked : 0.000000
+Info rescue rate | invoked  : 0.000000
+Parity-only rescue | invoked: 0.000000
+Phase1 / Phase2 success     : 0.000000 / 0.000000
+Pools info/txp/latent       : 13.61 / 11.90 / 9.99
+Avg GRAND patterns/failure  : 700.693
+Avg phase1 / phase2 patterns: 561.940 / 138.753
+Avg stage-1 decoder us      : 13092.676
+Avg GRAND decoder us        : 586.615
+Avg total hybrid decoder us : 13679.292
+
+=== AIPCG HYBRID EVAL ===
+SNR (dB)                    : 11.50
+Frames simulated            : 11237
+LDPC FER / BER              : 1.361573e-02 / 2.589537e-03
+Hybrid FER / BER            : 1.334876e-02 / 2.589537e-03
+Avg stage-1 iters/frame     : 4.599
+GRAND invocation rate       : 0.013616
+GRAND rescue rate | invoked : 0.019608
+Info rescue rate | invoked  : 0.000000
+Parity-only rescue | invoked: 0.019608
+Phase1 / Phase2 success     : 0.000000 / 0.019608
+Pools info/txp/latent       : 13.10 / 11.58 / 9.75
+Avg GRAND patterns/failure  : 677.562
+Avg phase1 / phase2 patterns: 542.170 / 135.392
+Avg stage-1 decoder us      : 9080.638
+Avg GRAND decoder us        : 360.129
+Avg total hybrid decoder us : 9440.767
+
+=== AIPCG HYBRID EVAL ===
+SNR (dB)                    : 12.00
+Frames simulated            : 14637
+LDPC FER / BER              : 1.031632e-02 / 1.858785e-03
+Hybrid FER / BER            : 1.024800e-02 / 1.858785e-03
+Avg stage-1 iters/frame     : 4.417
+GRAND invocation rate       : 0.010316
+GRAND rescue rate | invoked : 0.006623
+Info rescue rate | invoked  : 0.000000
+Parity-only rescue | invoked: 0.006623
+Phase1 / Phase2 success     : 0.000000 / 0.006623
+Pools info/txp/latent       : 13.48 / 11.87 / 9.93
+Avg GRAND patterns/failure  : 696.616
+Avg phase1 / phase2 patterns: 558.318 / 138.298
+Avg stage-1 decoder us      : 7904.243
+Avg GRAND decoder us        : 280.547
+Avg total hybrid decoder us : 8184.790
+
+=== AIPCG HYBRID EVAL ===
+SNR (dB)                    : 12.50
+Frames simulated            : 17476
+LDPC FER / BER              : 8.640421e-03 / 1.583813e-03
+Hybrid FER / BER            : 8.583200e-03 / 1.583813e-03
+Avg stage-1 iters/frame     : 4.255
+GRAND invocation rate       : 0.008640
+GRAND rescue rate | invoked : 0.006623
+Info rescue rate | invoked  : 0.000000
+Parity-only rescue | invoked: 0.006623
+Phase1 / Phase2 success     : 0.000000 / 0.006623
+Pools info/txp/latent       : 13.54 / 11.79 / 9.93
+Avg GRAND patterns/failure  : 693.550
+Avg phase1 / phase2 patterns: 555.980 / 137.570
+Avg stage-1 decoder us      : 6482.948
+Avg GRAND decoder us        : 234.001
+Avg total hybrid decoder us : 6716.949
+[SAVE] summary=results/run_hybrid_ldpc_grand_aipcg_20260403_it25_31722905_2/aipcg_it25_20260403-205455_summary.csv
+[SAVE] raw=results/run_hybrid_ldpc_grand_aipcg_20260403_it25_31722905_2/aipcg_it25_20260403-205455_raw.pkl
+[SAVE] config=results/run_hybrid_ldpc_grand_aipcg_20260403_it25_31722905_2/aipcg_it25_20260403-205455_config.json
+[SAVE] model=results/run_hybrid_ldpc_grand_aipcg_20260403_it25_31722905_2/aipcg_student_it25.npz
