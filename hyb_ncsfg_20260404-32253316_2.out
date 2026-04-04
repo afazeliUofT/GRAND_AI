@@ -1,0 +1,132 @@
+{
+  "errors": {},
+  "python": "/scratch/rsadve1/venvs/grand5g/bin/python",
+  "status": {
+    "LDPC5GEncoder_ok": true,
+    "TDL_ok": true,
+    "numba_ok": true,
+    "numpy_ok": true,
+    "scipy_ok": true,
+    "sionna_ok": true
+  }
+}
+[SBATCH CONFIG] task=2 it=25 eval_snr=9.0,9.5,10.0,10.5,11.0 calib_snr=8.5,9.0,9.5,10.0
+[SBATCH CONFIG] channel=SIONNA_TDL tdl=B delay=1.0e-7 speed=[1.0,3.0] cfo=15.0 csi=nr_imperfect
+[SBATCH CONFIG] pools info/punc/txp=18/10/8 gate_thr=0.28 gate_caps=18/28 max_w=8 free_dim=10
+[RUN] code=sionna5g_k1024_n2048_qm1 it=25 eval_snr=[9.0, 9.5, 10.0, 10.5, 11.0]
+[RUN] calib={'calib_total_frames': 8509, 'calib_failed_frames': 384, 'calib_positive_frames': 0, 'bit_model_ready': False, 'gate_model_ready': False, 'bit_model_path': 'results/run_hybrid_ldpc_grand_ncsfg_20260404_it25_32253316_2/ncsfg_bit_student_it25.npz', 'gate_model_path': 'results/run_hybrid_ldpc_grand_ncsfg_20260404_it25_32253316_2/ncsfg_gate_student_it25.npz'}
+
+=== NCSFG HYBRID EVAL ===
+SNR (dB)                         : 9.00
+Frames simulated                 : 3616
+LDPC FER / BER                   : 3.318584e-02 / 6.906425e-03
+Hybrid FER / BER                 : 3.318584e-02 / 6.906425e-03
+Avg stage-1 iters/frame          : 4.856
+Failed frame rate                : 0.033186
+Gate positive | failed          : 0.016667
+Avg gate prob | failed          : 0.294722
+GRAND invocation rate            : 0.000553
+GRAND rescue rate | invoked      : 0.000000
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.000000
+Info / parity round success      : 0.000000 / 0.000000
+Pools info/punc/txp | invoked    : 0.00 / 0.00 / 1.00
+Avg candidate pool | invoked     : 2.000
+Avg solver candidates | invoked  : 0.000
+Avg max free dim | invoked       : 0.000
+Avg stage-1 decoder us           : 3803.154
+Avg GRAND decoder us             : 0.049
+Avg total hybrid decoder us      : 3803.203
+
+=== NCSFG HYBRID EVAL ===
+SNR (dB)                         : 9.50
+Frames simulated                 : 5974
+LDPC FER / BER                   : 2.058922e-02 / 4.039150e-03
+Hybrid FER / BER                 : 2.008704e-02 / 4.039150e-03
+Avg stage-1 iters/frame          : 4.391
+Failed frame rate                : 0.020589
+Gate positive | failed          : 0.024390
+Avg gate prob | failed          : 0.314863
+GRAND invocation rate            : 0.000502
+GRAND rescue rate | invoked      : 1.000000
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 1.000000
+Info / parity round success      : 0.000000 / 1.000000
+Pools info/punc/txp | invoked    : 0.00 / 0.00 / 1.33
+Avg candidate pool | invoked     : 2.667
+Avg solver candidates | invoked  : 1.000
+Avg max free dim | invoked       : 0.000
+Avg stage-1 decoder us           : 3728.832
+Avg GRAND decoder us             : 0.104
+Avg total hybrid decoder us      : 3728.936
+
+=== NCSFG HYBRID EVAL ===
+SNR (dB)                         : 10.00
+Frames simulated                 : 5684
+LDPC FER / BER                   : 2.111189e-02 / 4.070328e-03
+Hybrid FER / BER                 : 2.111189e-02 / 4.070328e-03
+Avg stage-1 iters/frame          : 4.268
+Failed frame rate                : 0.021112
+Gate positive | failed          : 0.033333
+Avg gate prob | failed          : 0.315170
+GRAND invocation rate            : 0.000704
+GRAND rescue rate | invoked      : 0.000000
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.000000
+Info / parity round success      : 0.000000 / 0.000000
+Pools info/punc/txp | invoked    : 0.50 / 0.00 / 3.00
+Avg candidate pool | invoked     : 7.500
+Avg solver candidates | invoked  : 0.000
+Avg max free dim | invoked       : 0.000
+Avg stage-1 decoder us           : 3719.118
+Avg GRAND decoder us             : 0.112
+Avg total hybrid decoder us      : 3719.230
+
+=== NCSFG HYBRID EVAL ===
+SNR (dB)                         : 10.50
+Frames simulated                 : 9496
+LDPC FER / BER                   : 1.263690e-02 / 2.553295e-03
+Hybrid FER / BER                 : 1.263690e-02 / 2.553295e-03
+Avg stage-1 iters/frame          : 3.918
+Failed frame rate                : 0.012637
+Gate positive | failed          : 0.000000
+Avg gate prob | failed          : 0.298693
+GRAND invocation rate            : 0.000000
+GRAND rescue rate | invoked      : 0.000000
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.000000
+Info / parity round success      : 0.000000 / 0.000000
+Pools info/punc/txp | invoked    : 0.00 / 0.00 / 0.00
+Avg candidate pool | invoked     : 0.000
+Avg solver candidates | invoked  : 0.000
+Avg max free dim | invoked       : 0.000
+Avg stage-1 decoder us           : 3630.513
+Avg GRAND decoder us             : 0.000
+Avg total hybrid decoder us      : 3630.513
+
+=== NCSFG HYBRID EVAL ===
+SNR (dB)                         : 11.00
+Frames simulated                 : 13138
+LDPC FER / BER                   : 9.133810e-03 / 1.718090e-03
+Hybrid FER / BER                 : 9.133810e-03 / 1.718090e-03
+Avg stage-1 iters/frame          : 3.661
+Failed frame rate                : 0.009134
+Gate positive | failed          : 0.016667
+Avg gate prob | failed          : 0.317468
+GRAND invocation rate            : 0.000152
+GRAND rescue rate | invoked      : 0.000000
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.000000
+Info / parity round success      : 0.000000 / 0.000000
+Pools info/punc/txp | invoked    : 0.00 / 0.00 / 0.50
+Avg candidate pool | invoked     : 1.000
+Avg solver candidates | invoked  : 0.000
+Avg max free dim | invoked       : 0.000
+Avg stage-1 decoder us           : 3640.191
+Avg GRAND decoder us             : 0.010
+Avg total hybrid decoder us      : 3640.201
+[SAVE] summary=results/run_hybrid_ldpc_grand_ncsfg_20260404_it25_32253316_2/ncsfg_it25_20260404-174247_summary.csv
+[SAVE] raw=results/run_hybrid_ldpc_grand_ncsfg_20260404_it25_32253316_2/ncsfg_it25_20260404-174247_raw.pkl
+[SAVE] config=results/run_hybrid_ldpc_grand_ncsfg_20260404_it25_32253316_2/ncsfg_it25_20260404-174247_config.json
+[SAVE] bit_model=not-created
+[SAVE] gate_model=not-created

@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=hyb_aipig_20260403
+#SBATCH --job-name=hyb_ncsfg_20260404
 #SBATCH --account=def-rsadve
-#SBATCH --time=9:00:00
+#SBATCH --time=10:00:00
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=0
 #SBATCH --array=0-2%3
@@ -95,35 +95,36 @@ export MKL_NUM_THREADS=1
 export VECLIB_MAXIMUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
-# Same realistic 5G receiver chain for baseline and hybrid.
-# Keep the same TDL-C + imperfect-CSI chain so the decoder change is isolated.
+# Same realistic receiver chain for baseline and hybrid; only decoder changes.
+# Move from the previous harsh TDL-C / strong CSI mismatch regime to a lighter but still realistic 3GPP TDL-B regime,
+# so post-LDPC failures are more near-codeword and actually rescuable.
 export CHANNEL_NAME=SIONNA_TDL
 export SIONNA_5G_K=1024
 export SIONNA_5G_N=2048
 export SIONNA_5G_QM=1
-export SIONNA_TDL_MODEL=C
-export SIONNA_TDL_DELAY_SPREAD_S=3.0e-7
+export SIONNA_TDL_MODEL=B
+export SIONNA_TDL_DELAY_SPREAD_S=1.0e-7
 export SIONNA_TDL_CARRIER_FREQUENCY_HZ=3.5e9
-export SIONNA_TDL_MIN_SPEED=5.0
-export SIONNA_TDL_MAX_SPEED=20.0
+export SIONNA_TDL_MIN_SPEED=1.0
+export SIONNA_TDL_MAX_SPEED=3.0
 export SIONNA_OFDM_FFT_SIZE=512
 export SIONNA_OFDM_SUBCARRIER_SPACING_HZ=15000
-export SIONNA_CFO_HZ=80.0
+export SIONNA_CFO_HZ=15.0
 export SIONNA_CSI_MODE=nr_imperfect
-export SIONNA_CSI_PILOT_STRIDE=16
-export SIONNA_CSI_SMOOTH_PILOTS=2
-export SIONNA_CSI_EST_SNR_DB=18
-export SIONNA_CSI_PHASE_DRIFT_STD_DEG=1.5
-export SIONNA_CSI_AMP_RIPPLE_DB=0.6
-export SIONNA_CSI_DELAY_BIAS_NS=8.0
-export SIONNA_CSI_BLOCK_SC=12
+export SIONNA_CSI_PILOT_STRIDE=8
+export SIONNA_CSI_SMOOTH_PILOTS=3
+export SIONNA_CSI_EST_SNR_DB=24
+export SIONNA_CSI_PHASE_DRIFT_STD_DEG=0.35
+export SIONNA_CSI_AMP_RIPPLE_DB=0.15
+export SIONNA_CSI_DELAY_BIAS_NS=2.0
+export SIONNA_CSI_BLOCK_SC=8
 export SIONNA_LLR_MAX=50.0
 
 export LDPC_ALPHA=0.80
-export TARGET_FRAME_ERRORS=150
-export MAX_FRAMES=120000
-export CALIB_TARGET_FAILED_FRAMES=256
-export CALIB_MAX_FRAMES=120000
+export TARGET_FRAME_ERRORS=120
+export MAX_FRAMES=180000
+export CALIB_TARGET_FAILED_FRAMES=384
+export CALIB_MAX_FRAMES=180000
 export CALIB_NEG_RATIO=6.0
 export CALIB_HARD_NEG_CAP=128
 export AI_TEACHER_HIDDEN=64
@@ -131,48 +132,58 @@ export AI_TEACHER_EPOCHS=24
 export AI_STUDENT_EPOCHS=20
 export AI_BATCH_SIZE=4096
 export AI_TEACHER_LR=0.010
-export AI_STUDENT_LR=0.025
+export AI_STUDENT_LR=0.022
 export AI_DISTILL_TEMP=2.5
 
-# AIPIG: prioritize transmitted information bits and punctured information bits first,
-# then use transmitted parity only for cleanup so TGDS-style parity-only rescue is de-emphasized.
-export GRAND_TX_INFO_POOL=16
-export GRAND_TX_PARITY_POOL=12
+# Calibration-time exact local support solver.
+export CALIB_TX_INFO_POOL=26
+export CALIB_PUNCTURED_INFO_POOL=14
+export CALIB_TX_PARITY_POOL=12
+export CALIB_WEIGHT_CAP=10
+export CALIB_FREE_DIM_CAP=12
+export CALIB_MAX_CANDIDATES=4096
+
+# Near-codeword gated, syndrome-filtered GRAND.
+export GRAND_TX_INFO_POOL=18
+export GRAND_TX_PARITY_POOL=8
 export GRAND_PUNCTURED_INFO_POOL=10
-export GRAND_LOCAL_TOUCH_CAP=12
-export GRAND_PHASE1_MAX_DEPTH=6
-export GRAND_PHASE2_MAX_DEPTH=3
-export GRAND_PHASE1_BEAM=20
-export GRAND_PHASE2_BEAM=12
-export GRAND_MAX_PATTERNS=2048
-export GRAND_AI_WEIGHT=1.35
-export GRAND_GAIN_WEIGHT=0.22
-export GRAND_OSC_WEIGHT=0.16
+export GRAND_ROUND2_EXTRA_INFO=6
+export GRAND_ROUND2_EXTRA_PUNCTURED=4
+export GRAND_ROUND2_EXTRA_PARITY=4
+export GRAND_MAX_WEIGHT=8
+export GRAND_FREE_DIM_CAP=10
+export GRAND_MAX_PATTERNS=1024
+export GRAND_FRAME_GATE_THRESHOLD=0.28
+export GRAND_GATE_MAX_SYND=18
+export GRAND_GATE_MAX_HARD_ONES=28
+export GRAND_AI_WEIGHT=1.50
+export GRAND_GAIN_WEIGHT=0.24
+export GRAND_OSC_WEIGHT=0.18
 export GRAND_LLR_WEIGHT=1.00
 export GRAND_SW_WEIGHT=1.20
-export GRAND_INFO_BONUS=0.62
-export GRAND_TX_BONUS=0.18
-export GRAND_PUNCTURED_INFO_BONUS=0.34
-export GRAND_PARITY_PENALTY=0.08
-export RNG_SEED_GLOBAL=20260403
+export GRAND_INFO_BONUS=0.70
+export GRAND_TX_BONUS=0.16
+export GRAND_PUNCTURED_INFO_BONUS=0.40
+export GRAND_PARITY_PENALTY=0.15
+export RNG_SEED_GLOBAL=20260404
 
 case "${SLURM_ARRAY_TASK_ID}" in
   0)
     export STAGE1_ITERS=8
-    export CALIB_SNR_SWEEP="9.5,10.0,10.5,11.0"
-    export EVAL_SNR_SWEEP="10.0,10.5,11.0,11.5,12.0"
+    export CALIB_SNR_SWEEP="7.5,8.0,8.5,9.0"
+    export EVAL_SNR_SWEEP="8.0,8.5,9.0,9.5,10.0"
     ITER_TAG="it08"
     ;;
   1)
     export STAGE1_ITERS=15
-    export CALIB_SNR_SWEEP="9.5,10.0,10.5,11.0"
-    export EVAL_SNR_SWEEP="10.0,10.5,11.0,11.5,12.0"
+    export CALIB_SNR_SWEEP="8.0,8.5,9.0,9.5"
+    export EVAL_SNR_SWEEP="8.5,9.0,9.5,10.0,10.5"
     ITER_TAG="it15"
     ;;
   2)
     export STAGE1_ITERS=25
-    export CALIB_SNR_SWEEP="10.0,10.5,11.0,11.5"
-    export EVAL_SNR_SWEEP="10.5,11.0,11.5,12.0,12.5"
+    export CALIB_SNR_SWEEP="8.5,9.0,9.5,10.0"
+    export EVAL_SNR_SWEEP="9.0,9.5,10.0,10.5,11.0"
     ITER_TAG="it25"
     ;;
   *)
@@ -181,16 +192,17 @@ case "${SLURM_ARRAY_TASK_ID}" in
     ;;
 esac
 
-RESULTS_DIR="results/run_hybrid_ldpc_grand_aipig_20260403_${ITER_TAG}_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+RESULTS_DIR="results/run_hybrid_ldpc_grand_ncsfg_20260404_${ITER_TAG}_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 mkdir -p "$RESULTS_DIR"
 
 printf '[SBATCH CONFIG] task=%s it=%s eval_snr=%s calib_snr=%s\n' "$SLURM_ARRAY_TASK_ID" "$STAGE1_ITERS" "$EVAL_SNR_SWEEP" "$CALIB_SNR_SWEEP"
 printf '[SBATCH CONFIG] channel=%s tdl=%s delay=%s speed=[%s,%s] cfo=%s csi=%s\n' \
   "$CHANNEL_NAME" "$SIONNA_TDL_MODEL" "$SIONNA_TDL_DELAY_SPREAD_S" \
   "$SIONNA_TDL_MIN_SPEED" "$SIONNA_TDL_MAX_SPEED" "$SIONNA_CFO_HZ" "$SIONNA_CSI_MODE"
-printf '[SBATCH CONFIG] pools info/punc/txp=%s/%s/%s beam1/2=%s/%s depth1/2=%s/%s max_patterns=%s\n' \
+printf '[SBATCH CONFIG] pools info/punc/txp=%s/%s/%s gate_thr=%s gate_caps=%s/%s max_w=%s free_dim=%s\n' \
   "$GRAND_TX_INFO_POOL" "$GRAND_PUNCTURED_INFO_POOL" "$GRAND_TX_PARITY_POOL" \
-  "$GRAND_PHASE1_BEAM" "$GRAND_PHASE2_BEAM" "$GRAND_PHASE1_MAX_DEPTH" "$GRAND_PHASE2_MAX_DEPTH" "$GRAND_MAX_PATTERNS"
+  "$GRAND_FRAME_GATE_THRESHOLD" "$GRAND_GATE_MAX_SYND" "$GRAND_GATE_MAX_HARD_ONES" \
+  "$GRAND_MAX_WEIGHT" "$GRAND_FREE_DIM_CAP"
 
-python -u hybrid_ldpc_grand_aipig_20260403.py "$RESULTS_DIR" \
+python -u hybrid_ldpc_grand_ncsfg_20260404.py "$RESULTS_DIR" \
   2> >(grep -vE 'oneDNN custom operations are on|Unable to register cuFFT factory|All log messages before absl::InitializeLog|Unable to register cuDNN factory|Unable to register cuBLAS factory|computation placer already registered' >&2)
