@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=hyb_aipcg_20260403
+#SBATCH --job-name=hyb_aipig_20260403
 #SBATCH --account=def-rsadve
-#SBATCH --time=8:00:00
+#SBATCH --time=9:00:00
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=0
 #SBATCH --array=0-2%3
@@ -122,44 +122,45 @@ export SIONNA_LLR_MAX=50.0
 export LDPC_ALPHA=0.80
 export TARGET_FRAME_ERRORS=150
 export MAX_FRAMES=120000
-export CALIB_TARGET_FAILED_FRAMES=192
-export CALIB_MAX_FRAMES=90000
+export CALIB_TARGET_FAILED_FRAMES=256
+export CALIB_MAX_FRAMES=120000
 export CALIB_NEG_RATIO=6.0
-export CALIB_HARD_NEG_CAP=96
-export AI_TEACHER_HIDDEN=48
-export AI_TEACHER_EPOCHS=20
-export AI_STUDENT_EPOCHS=18
+export CALIB_HARD_NEG_CAP=128
+export AI_TEACHER_HIDDEN=64
+export AI_TEACHER_EPOCHS=24
+export AI_STUDENT_EPOCHS=20
 export AI_BATCH_SIZE=4096
 export AI_TEACHER_LR=0.010
 export AI_STUDENT_LR=0.025
 export AI_DISTILL_TEMP=2.5
 
-# AIPCG: prioritize transmitted information bits first, then parity helpers,
-# then latent helpers only if still needed.
-export GRAND_TX_INFO_POOL=14
+# AIPIG: prioritize transmitted information bits and punctured information bits first,
+# then use transmitted parity only for cleanup so TGDS-style parity-only rescue is de-emphasized.
+export GRAND_TX_INFO_POOL=16
 export GRAND_TX_PARITY_POOL=12
-export GRAND_LATENT_POOL=10
-export GRAND_LOCAL_TOUCH_CAP=10
+export GRAND_PUNCTURED_INFO_POOL=10
+export GRAND_LOCAL_TOUCH_CAP=12
 export GRAND_PHASE1_MAX_DEPTH=6
 export GRAND_PHASE2_MAX_DEPTH=3
-export GRAND_PHASE1_BEAM=18
+export GRAND_PHASE1_BEAM=20
 export GRAND_PHASE2_BEAM=12
-export GRAND_MAX_PATTERNS=1536
+export GRAND_MAX_PATTERNS=2048
 export GRAND_AI_WEIGHT=1.35
 export GRAND_GAIN_WEIGHT=0.22
 export GRAND_OSC_WEIGHT=0.16
 export GRAND_LLR_WEIGHT=1.00
 export GRAND_SW_WEIGHT=1.20
-export GRAND_INFO_BONUS=0.55
+export GRAND_INFO_BONUS=0.62
 export GRAND_TX_BONUS=0.18
-export GRAND_LATENT_PENALTY=0.45
+export GRAND_PUNCTURED_INFO_BONUS=0.34
+export GRAND_PARITY_PENALTY=0.08
 export RNG_SEED_GLOBAL=20260403
 
 case "${SLURM_ARRAY_TASK_ID}" in
   0)
     export STAGE1_ITERS=8
     export CALIB_SNR_SWEEP="9.5,10.0,10.5,11.0"
-    export EVAL_SNR_SWEEP="9.5,10.0,10.5,11.0,11.5"
+    export EVAL_SNR_SWEEP="10.0,10.5,11.0,11.5,12.0"
     ITER_TAG="it08"
     ;;
   1)
@@ -180,16 +181,16 @@ case "${SLURM_ARRAY_TASK_ID}" in
     ;;
 esac
 
-RESULTS_DIR="results/run_hybrid_ldpc_grand_aipcg_20260403_${ITER_TAG}_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+RESULTS_DIR="results/run_hybrid_ldpc_grand_aipig_20260403_${ITER_TAG}_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 mkdir -p "$RESULTS_DIR"
 
 printf '[SBATCH CONFIG] task=%s it=%s eval_snr=%s calib_snr=%s\n' "$SLURM_ARRAY_TASK_ID" "$STAGE1_ITERS" "$EVAL_SNR_SWEEP" "$CALIB_SNR_SWEEP"
 printf '[SBATCH CONFIG] channel=%s tdl=%s delay=%s speed=[%s,%s] cfo=%s csi=%s\n' \
   "$CHANNEL_NAME" "$SIONNA_TDL_MODEL" "$SIONNA_TDL_DELAY_SPREAD_S" \
   "$SIONNA_TDL_MIN_SPEED" "$SIONNA_TDL_MAX_SPEED" "$SIONNA_CFO_HZ" "$SIONNA_CSI_MODE"
-printf '[SBATCH CONFIG] pools info/txp/latent=%s/%s/%s beam1/2=%s/%s depth1/2=%s/%s max_patterns=%s\n' \
-  "$GRAND_TX_INFO_POOL" "$GRAND_TX_PARITY_POOL" "$GRAND_LATENT_POOL" \
+printf '[SBATCH CONFIG] pools info/punc/txp=%s/%s/%s beam1/2=%s/%s depth1/2=%s/%s max_patterns=%s\n' \
+  "$GRAND_TX_INFO_POOL" "$GRAND_PUNCTURED_INFO_POOL" "$GRAND_TX_PARITY_POOL" \
   "$GRAND_PHASE1_BEAM" "$GRAND_PHASE2_BEAM" "$GRAND_PHASE1_MAX_DEPTH" "$GRAND_PHASE2_MAX_DEPTH" "$GRAND_MAX_PATTERNS"
 
-python -u hybrid_ldpc_grand_aipcg_20260403.py "$RESULTS_DIR" \
+python -u hybrid_ldpc_grand_aipig_20260403.py "$RESULTS_DIR" \
   2> >(grep -vE 'oneDNN custom operations are on|Unable to register cuFFT factory|All log messages before absl::InitializeLog|Unable to register cuDNN factory|Unable to register cuBLAS factory|computation placer already registered' >&2)

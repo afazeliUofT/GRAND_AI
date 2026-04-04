@@ -176,13 +176,13 @@ class MCConfig:
 
 @dataclass
 class CalibrationConfig:
-    target_failed_frames: int = 192
-    max_frames: int = 90000
+    target_failed_frames: int = 256
+    max_frames: int = 120000
     neg_ratio: float = 6.0
-    hard_negative_cap: int = 96
-    teacher_hidden: int = 48
-    teacher_epochs: int = 20
-    student_epochs: int = 18
+    hard_negative_cap: int = 128
+    teacher_hidden: int = 64
+    teacher_epochs: int = 24
+    student_epochs: int = 20
     batch_size: int = 4096
     teacher_lr: float = 0.01
     student_lr: float = 0.025
@@ -190,23 +190,24 @@ class CalibrationConfig:
 
 @dataclass
 class HybridConfig:
-    tx_info_pool: int = 14
+    tx_info_pool: int = 16
+    punctured_info_pool: int = 10
     tx_parity_pool: int = 12
-    latent_pool: int = 10
-    local_touch_cap: int = 10
+    local_touch_cap: int = 12
     phase1_max_depth: int = 6
     phase2_max_depth: int = 3
-    phase1_beam: int = 18
+    phase1_beam: int = 20
     phase2_beam: int = 12
-    max_patterns: int = 1536
+    max_patterns: int = 2048
     ai_weight: float = 1.35
     gain_weight: float = 0.22
     osc_weight: float = 0.16
     llr_weight: float = 1.0
     sw_weight: float = 1.20
-    info_bonus: float = 0.55
+    info_bonus: float = 0.62
+    punctured_info_bonus: float = 0.34
     tx_bonus: float = 0.18
-    latent_penalty: float = 0.45
+    parity_penalty: float = 0.08
 
 @dataclass
 class RunConfig:
@@ -955,6 +956,7 @@ FEATURE_NAMES = [
     "is_tx",
     "is_info",
     "is_tx_info",
+    "is_punctured_info",
     "is_tx_parity",
     "is_latent",
 ]
@@ -1036,12 +1038,14 @@ def _feature_pack(code_cfg: CodeConfig, llr_final: np.ndarray, hard_final: np.nd
             code_cfg._tx_mask.astype(np.float32),
             code_cfg._info_mask.astype(np.float32),
             code_cfg._tx_info_mask.astype(np.float32),
+            code_cfg._punctured_info_mask.astype(np.float32),
             code_cfg._tx_parity_mask.astype(np.float32),
             code_cfg._latent_mask.astype(np.float32),
         ],
         axis=1,
     ).astype(np.float32)
     return feat
+
 
 def _collect_training_rows(feat: np.ndarray, labels: np.ndarray, llr_final: np.ndarray, syndrome_final: np.ndarray, cfg: CalibrationConfig, seed: int):
     rng = np.random.default_rng(int(seed))
@@ -1050,13 +1054,15 @@ def _collect_training_rows(feat: np.ndarray, labels: np.ndarray, llr_final: np.n
         return None
     abs_llr = np.abs(llr_final)
     tx_info = feat[:, FEATURE_INDEX["is_tx_info"]]
-    latent = feat[:, FEATURE_INDEX["is_latent"]]
+    punctured_info = feat[:, FEATURE_INDEX["is_punctured_info"]]
+    tx_parity = feat[:, FEATURE_INDEX["is_tx_parity"]]
     score = (
         (1.0 / (1.0 + abs_llr))
         + 0.80 * feat[:, FEATURE_INDEX["unsat_frac"]]
         + 0.60 * feat[:, FEATURE_INDEX["flip_rate"]]
-        + 0.35 * tx_info
-        - 0.15 * latent
+        + 0.42 * tx_info
+        + 0.30 * punctured_info
+        - 0.08 * tx_parity
     )
     cand = np.argsort(-score)
     zero_mask = labels == 0
@@ -1076,8 +1082,13 @@ def _collect_training_rows(feat: np.ndarray, labels: np.ndarray, llr_final: np.n
     X = feat[keep].astype(np.float32)
     y = labels[keep].astype(np.float32)
     tx_info_keep = tx_info[keep].astype(np.float32)
-    latent_keep = latent[keep].astype(np.float32)
-    w = np.where(y > 0.5, 1.0 + 0.55 * tx_info_keep, 0.32 + 0.05 * (1.0 - latent_keep)).astype(np.float32)
+    punctured_info_keep = punctured_info[keep].astype(np.float32)
+    tx_parity_keep = tx_parity[keep].astype(np.float32)
+    w = np.where(
+        y > 0.5,
+        1.0 + 0.60 * tx_info_keep + 0.34 * punctured_info_keep,
+        0.32 + 0.04 * (1.0 - tx_parity_keep),
+    ).astype(np.float32)
     return X, y, w
 
 def train_ai_ranker(rows: List[Tuple[np.ndarray, np.ndarray, np.ndarray]], cfg: CalibrationConfig, seed: int) -> Optional[DistilledLinearStudent]:
@@ -1141,6 +1152,7 @@ def student_prob(student: Optional[DistilledLinearStudent], feat: np.ndarray) ->
 
 
 # ------------------------- AI-guided GRAND -------------------------
+
 def _bit_search_base_score(code_cfg: CodeConfig, llr_final: np.ndarray, ai_prob_vec: np.ndarray, feat: np.ndarray, cfg: HybridConfig) -> np.ndarray:
     score = (
         ai_prob_vec
@@ -1148,11 +1160,11 @@ def _bit_search_base_score(code_cfg: CodeConfig, llr_final: np.ndarray, ai_prob_
         + float(cfg.osc_weight) * feat[:, FEATURE_INDEX["flip_rate"]]
         + 0.28 * feat[:, FEATURE_INDEX["inv_abs_llr"]]
         + float(cfg.tx_bonus) * feat[:, FEATURE_INDEX["is_tx"]]
-        + 0.60 * float(cfg.info_bonus) * feat[:, FEATURE_INDEX["is_tx_info"]]
-        - 0.50 * float(cfg.latent_penalty) * feat[:, FEATURE_INDEX["is_latent"]]
+        + float(cfg.info_bonus) * feat[:, FEATURE_INDEX["is_tx_info"]]
+        + float(cfg.punctured_info_bonus) * feat[:, FEATURE_INDEX["is_punctured_info"]]
+        - float(cfg.parity_penalty) * feat[:, FEATURE_INDEX["is_tx_parity"]]
     )
     return score.astype(np.float32)
-
 
 def _sorted_pool(indices: np.ndarray, base_score: np.ndarray, llr_final: np.ndarray, take: int) -> List[int]:
     if indices.size == 0:
@@ -1161,30 +1173,24 @@ def _sorted_pool(indices: np.ndarray, base_score: np.ndarray, llr_final: np.ndar
     return [int(v) for v in order[: int(max(0, take))]]
 
 
+
 def _domain_pools(code_cfg: CodeConfig, hard_final: np.ndarray, llr_final: np.ndarray, syndrome_final: np.ndarray, ai_prob_vec: np.ndarray, feat: np.ndarray, cfg: HybridConfig):
     hard_mask = hard_final.astype(bool)
     searchable = hard_mask & (~code_cfg._filler_mask.astype(bool))
     base_score = _bit_search_base_score(code_cfg, llr_final, ai_prob_vec, feat, cfg)
 
     info_idx = np.flatnonzero(searchable & code_cfg._tx_info_mask.astype(bool))
-    tx_par_idx = np.flatnonzero(searchable & code_cfg._tx_parity_mask.astype(bool))
-    latent_idx = np.flatnonzero(searchable & code_cfg._latent_mask.astype(bool))
     punctured_info_idx = np.flatnonzero(searchable & code_cfg._punctured_info_mask.astype(bool))
+    tx_par_idx = np.flatnonzero(searchable & code_cfg._tx_parity_mask.astype(bool))
 
     info_pool = _sorted_pool(info_idx, base_score, llr_final, int(cfg.tx_info_pool))
+    punctured_info_pool = _sorted_pool(punctured_info_idx, base_score, llr_final, int(cfg.punctured_info_pool))
     tx_par_pool = _sorted_pool(tx_par_idx, base_score, llr_final, int(cfg.tx_parity_pool))
-    latent_pool = _sorted_pool(latent_idx, base_score, llr_final, int(cfg.latent_pool))
 
-    # If very few transmitted info anchors are available, allow punctured info only as late helpers.
-    if len(info_pool) < max(4, int(cfg.tx_info_pool) // 2):
-        extra = _sorted_pool(punctured_info_idx, base_score, llr_final, max(0, int(cfg.latent_pool) - len(latent_pool)))
-        seen = set(latent_pool)
-        for v in extra:
-            if v not in seen:
-                latent_pool.append(v)
-                seen.add(v)
-    return info_pool, tx_par_pool, latent_pool, base_score
+    if not info_pool and punctured_info_pool:
+        info_pool = punctured_info_pool[: min(len(punctured_info_pool), max(4, int(cfg.punctured_info_pool) // 2))]
 
+    return info_pool, punctured_info_pool, tx_par_pool, base_score
 
 def _toggle_single_bit_syndrome(syndrome: np.ndarray, v: int, code_cfg: CodeConfig) -> np.ndarray:
     s = syndrome.copy()
@@ -1201,14 +1207,16 @@ def _touch_count_for_bit(syndrome: np.ndarray, v: int, code_cfg: CodeConfig) -> 
     return cnt
 
 
-def _state_metric(sw_after: int, llr_cost: float, ai_bonus: float, info_count: int, tx_count: int, latent_count: int, cfg: HybridConfig) -> float:
+
+def _state_metric(sw_after: int, llr_cost: float, ai_bonus: float, info_count: int, punctured_info_count: int, tx_count: int, parity_count: int, cfg: HybridConfig) -> float:
     return (
         float(cfg.sw_weight) * float(sw_after)
         + float(cfg.llr_weight) * float(llr_cost)
         - float(cfg.ai_weight) * float(ai_bonus)
         - float(cfg.info_bonus) * float(info_count)
+        - float(cfg.punctured_info_bonus) * float(punctured_info_count)
         - float(cfg.tx_bonus) * float(tx_count)
-        + float(cfg.latent_penalty) * float(latent_count)
+        + float(cfg.parity_penalty) * float(parity_count)
     )
 
 
@@ -1222,8 +1230,8 @@ def _beam_phase(
     feat: np.ndarray,
     cfg: HybridConfig,
     info_pool: List[int],
+    punctured_info_pool: List[int],
     tx_par_pool: List[int],
-    latent_pool: List[int],
     require_info: bool,
     max_depth: int,
     beam_width: int,
@@ -1232,12 +1240,12 @@ def _beam_phase(
     if phase_name == "info_first":
         depth_pools = []
         depth_pools.append(list(info_pool))
-        depth_pools.append(list(dict.fromkeys(info_pool + tx_par_pool[: max(4, len(tx_par_pool))])))
-        merged = list(dict.fromkeys(info_pool + tx_par_pool + latent_pool))
+        depth_pools.append(list(dict.fromkeys(info_pool + punctured_info_pool)))
+        merged = list(dict.fromkeys(info_pool + punctured_info_pool + tx_par_pool))
         for _ in range(2, max_depth):
             depth_pools.append(list(merged))
     else:
-        merged = list(dict.fromkeys(tx_par_pool + latent_pool))
+        merged = list(dict.fromkeys(tx_par_pool + punctured_info_pool))
         depth_pools = [list(merged) for _ in range(max_depth)]
 
     init = {
@@ -1246,9 +1254,10 @@ def _beam_phase(
         "llr_cost": 0.0,
         "ai_bonus": 0.0,
         "info_count": 0,
+        "punctured_info_count": 0,
         "tx_count": 0,
-        "latent_count": 0,
-        "metric": _state_metric(int(np.sum(syndrome_final)), 0.0, 0.0, 0, 0, 0, cfg),
+        "parity_count": 0,
+        "metric": _state_metric(int(np.sum(syndrome_final)), 0.0, 0.0, 0, 0, 0, 0, cfg),
     }
     beam = [init]
     tested = 0
@@ -1276,6 +1285,7 @@ def _beam_phase(
                 sw_after = int(np.sum(s_after))
                 delta_sw = sw_now - sw_after
                 local_key = (
+                    -int(code_cfg._tx_info_mask[int(v)] or code_cfg._punctured_info_mask[int(v)]),
                     -touch,
                     -delta_sw,
                     -float(ai_prob_vec[int(v)]),
@@ -1290,6 +1300,7 @@ def _beam_phase(
                     s_after = _toggle_single_bit_syndrome(state["syndrome"], int(v), code_cfg)
                     sw_after = int(np.sum(s_after))
                     local_key = (
+                        -int(code_cfg._tx_info_mask[int(v)] or code_cfg._punctured_info_mask[int(v)]),
                         0,
                         -(sw_now - sw_after),
                         -float(ai_prob_vec[int(v)]),
@@ -1307,13 +1318,14 @@ def _beam_phase(
                 llr_cost = float(state["llr_cost"] + float(np.abs(llr_final[int(v)])))
                 ai_bonus = float(state["ai_bonus"] + float(ai_prob_vec[int(v)]))
                 info_count = int(state["info_count"] + int(code_cfg._tx_info_mask[int(v)]))
+                punctured_info_count = int(state["punctured_info_count"] + int(code_cfg._punctured_info_mask[int(v)]))
                 tx_count = int(state["tx_count"] + int(code_cfg._tx_mask[int(v)]))
-                latent_count = int(state["latent_count"] + int(code_cfg._latent_mask[int(v)]))
-                metric = _state_metric(sw_after, llr_cost, ai_bonus, info_count, tx_count, latent_count, cfg)
+                parity_count = int(state["parity_count"] + int(code_cfg._tx_parity_mask[int(v)]))
+                metric = _state_metric(sw_after, llr_cost, ai_bonus, info_count, punctured_info_count, tx_count, parity_count, cfg)
                 tested += 1
                 seen_local.add(pattern)
                 seen_global.add(pattern)
-                if sw_after == 0 and ((not require_info) or info_count > 0):
+                if sw_after == 0 and ((not require_info) or (info_count + punctured_info_count) > 0):
                     bits = hard_final.copy()
                     bits[list(pattern)] ^= 1
                     return {
@@ -1323,8 +1335,9 @@ def _beam_phase(
                         "phase": phase_name,
                         "pattern": pattern,
                         "info_count": info_count,
+                        "punctured_info_count": punctured_info_count,
                         "tx_count": tx_count,
-                        "latent_count": latent_count,
+                        "parity_count": parity_count,
                     }
                 next_states.append(
                     {
@@ -1333,8 +1346,9 @@ def _beam_phase(
                         "llr_cost": llr_cost,
                         "ai_bonus": ai_bonus,
                         "info_count": info_count,
+                        "punctured_info_count": punctured_info_count,
                         "tx_count": tx_count,
-                        "latent_count": latent_count,
+                        "parity_count": parity_count,
                         "metric": metric,
                     }
                 )
@@ -1344,7 +1358,7 @@ def _beam_phase(
             key=lambda st: (
                 int(np.sum(st["syndrome"])),
                 float(st["metric"]),
-                -int(st["info_count"]),
+                -(int(st["info_count"]) + int(st["punctured_info_count"])),
                 -int(st["tx_count"]),
                 len(st["pattern"]),
             )
@@ -1357,14 +1371,15 @@ def _beam_phase(
         "phase": phase_name,
         "pattern": tuple(),
         "info_count": 0,
+        "punctured_info_count": 0,
         "tx_count": 0,
-        "latent_count": 0,
+        "parity_count": 0,
     }
 
 
 def ai_guided_grand(code_cfg: CodeConfig, hard_final: np.ndarray, llr_final: np.ndarray, syndrome_final: np.ndarray, ai_prob_vec: np.ndarray, feat: np.ndarray, cfg: HybridConfig):
-    info_pool, tx_par_pool, latent_pool, base_score = _domain_pools(code_cfg, hard_final, llr_final, syndrome_final, ai_prob_vec, feat, cfg)
-    if not info_pool and not tx_par_pool and not latent_pool:
+    info_pool, punctured_info_pool, tx_par_pool, base_score = _domain_pools(code_cfg, hard_final, llr_final, syndrome_final, ai_prob_vec, feat, cfg)
+    if not info_pool and not punctured_info_pool and not tx_par_pool:
         return {
             "success": False,
             "bits": hard_final,
@@ -1373,12 +1388,12 @@ def ai_guided_grand(code_cfg: CodeConfig, hard_final: np.ndarray, llr_final: np.
             "phase2_tested": 0,
             "success_phase": "empty",
             "pool_info": 0,
+            "pool_punctured_info": 0,
             "pool_tx_parity": 0,
-            "pool_latent": 0,
             "pattern": tuple(),
         }
 
-    phase1_budget = max(32, int(round(0.78 * int(cfg.max_patterns))))
+    phase1_budget = max(32, int(round(0.80 * int(cfg.max_patterns))))
     phase2_budget = max(16, int(cfg.max_patterns) - phase1_budget)
     res1 = _beam_phase(
         "info_first",
@@ -1390,8 +1405,8 @@ def ai_guided_grand(code_cfg: CodeConfig, hard_final: np.ndarray, llr_final: np.
         feat,
         cfg,
         info_pool,
+        punctured_info_pool,
         tx_par_pool,
-        latent_pool,
         require_info=True,
         max_depth=int(cfg.phase1_max_depth),
         beam_width=int(cfg.phase1_beam),
@@ -1404,8 +1419,8 @@ def ai_guided_grand(code_cfg: CodeConfig, hard_final: np.ndarray, llr_final: np.
                 "phase2_tested": 0,
                 "success_phase": "info_first",
                 "pool_info": len(info_pool),
+                "pool_punctured_info": len(punctured_info_pool),
                 "pool_tx_parity": len(tx_par_pool),
-                "pool_latent": len(latent_pool),
             }
         )
         return res1
@@ -1420,8 +1435,8 @@ def ai_guided_grand(code_cfg: CodeConfig, hard_final: np.ndarray, llr_final: np.
         feat,
         cfg,
         info_pool,
+        punctured_info_pool,
         tx_par_pool,
-        latent_pool,
         require_info=False,
         max_depth=int(cfg.phase2_max_depth),
         beam_width=int(cfg.phase2_beam),
@@ -1435,8 +1450,8 @@ def ai_guided_grand(code_cfg: CodeConfig, hard_final: np.ndarray, llr_final: np.
                 "patterns_tested": int(res1["patterns_tested"] + res2["patterns_tested"]),
                 "success_phase": "parity_cleanup",
                 "pool_info": len(info_pool),
+                "pool_punctured_info": len(punctured_info_pool),
                 "pool_tx_parity": len(tx_par_pool),
-                "pool_latent": len(latent_pool),
             }
         )
         return res2
@@ -1449,8 +1464,8 @@ def ai_guided_grand(code_cfg: CodeConfig, hard_final: np.ndarray, llr_final: np.
         "phase2_tested": int(res2["patterns_tested"]),
         "success_phase": "none",
         "pool_info": len(info_pool),
+        "pool_punctured_info": len(punctured_info_pool),
         "pool_tx_parity": len(tx_par_pool),
-        "pool_latent": len(latent_pool),
         "pattern": tuple(),
     }
 
@@ -1530,7 +1545,7 @@ def evaluate_one_snr(run_cfg: RunConfig, code_cfg: CodeConfig, snr_db: float, st
     grand_phase2_patterns_total = 0
     pool_info_total = 0
     pool_tx_parity_total = 0
-    pool_latent_total = 0
+    pool_punctured_info_total = 0
     stage1_time = 0.0
     grand_time = 0.0
 
@@ -1560,7 +1575,7 @@ def evaluate_one_snr(run_cfg: RunConfig, code_cfg: CodeConfig, snr_db: float, st
             grand_phase2_patterns_total += int(res.get("phase2_tested", 0))
             pool_info_total += int(res.get("pool_info", 0))
             pool_tx_parity_total += int(res.get("pool_tx_parity", 0))
-            pool_latent_total += int(res.get("pool_latent", 0))
+            pool_punctured_info_total += int(res.get("pool_punctured_info", 0))
             if res["success"]:
                 final_bits = res["bits"]
                 grand_rescues += 1
@@ -1604,7 +1619,7 @@ def evaluate_one_snr(run_cfg: RunConfig, code_cfg: CodeConfig, snr_db: float, st
         "avg_phase2_patterns_per_failed_frame": float(grand_phase2_patterns_total / grand_invocations) if grand_invocations > 0 else 0.0,
         "avg_info_pool_per_failed_frame": float(pool_info_total / grand_invocations) if grand_invocations > 0 else 0.0,
         "avg_tx_parity_pool_per_failed_frame": float(pool_tx_parity_total / grand_invocations) if grand_invocations > 0 else 0.0,
-        "avg_latent_pool_per_failed_frame": float(pool_latent_total / grand_invocations) if grand_invocations > 0 else 0.0,
+        "avg_punctured_info_pool_per_failed_frame": float(pool_punctured_info_total / grand_invocations) if grand_invocations > 0 else 0.0,
         "avg_grand_patterns_per_frame": float(grand_patterns_total / frames) if frames > 0 else 0.0,
         "avg_stage1_decoder_us": float(1e6 * stage1_time / frames) if frames > 0 else 0.0,
         "avg_grand_decoder_us": float(1e6 * grand_time / frames) if frames > 0 else 0.0,
@@ -1645,36 +1660,37 @@ def build_run_config(results_dir: str) -> RunConfig:
         min_frames=_env_int("MIN_FRAMES", 0),
     )
     calib = CalibrationConfig(
-        target_failed_frames=_env_int("CALIB_TARGET_FAILED_FRAMES", 192),
-        max_frames=_env_int("CALIB_MAX_FRAMES", 90000),
+        target_failed_frames=_env_int("CALIB_TARGET_FAILED_FRAMES", 256),
+        max_frames=_env_int("CALIB_MAX_FRAMES", 120000),
         neg_ratio=_env_float("CALIB_NEG_RATIO", 6.0),
-        hard_negative_cap=_env_int("CALIB_HARD_NEG_CAP", 96),
-        teacher_hidden=_env_int("AI_TEACHER_HIDDEN", 48),
-        teacher_epochs=_env_int("AI_TEACHER_EPOCHS", 20),
-        student_epochs=_env_int("AI_STUDENT_EPOCHS", 18),
+        hard_negative_cap=_env_int("CALIB_HARD_NEG_CAP", 128),
+        teacher_hidden=_env_int("AI_TEACHER_HIDDEN", 64),
+        teacher_epochs=_env_int("AI_TEACHER_EPOCHS", 24),
+        student_epochs=_env_int("AI_STUDENT_EPOCHS", 20),
         batch_size=_env_int("AI_BATCH_SIZE", 4096),
         teacher_lr=_env_float("AI_TEACHER_LR", 0.01),
         student_lr=_env_float("AI_STUDENT_LR", 0.025),
         temperature=_env_float("AI_DISTILL_TEMP", 2.5),
     )
     hybrid = HybridConfig(
-        tx_info_pool=_env_int("GRAND_TX_INFO_POOL", 14),
+        tx_info_pool=_env_int("GRAND_TX_INFO_POOL", 16),
         tx_parity_pool=_env_int("GRAND_TX_PARITY_POOL", 12),
-        latent_pool=_env_int("GRAND_LATENT_POOL", 10),
-        local_touch_cap=_env_int("GRAND_LOCAL_TOUCH_CAP", 10),
+        punctured_info_pool=_env_int("GRAND_PUNCTURED_INFO_POOL", 10),
+        local_touch_cap=_env_int("GRAND_LOCAL_TOUCH_CAP", 12),
         phase1_max_depth=_env_int("GRAND_PHASE1_MAX_DEPTH", 6),
         phase2_max_depth=_env_int("GRAND_PHASE2_MAX_DEPTH", 3),
-        phase1_beam=_env_int("GRAND_PHASE1_BEAM", 18),
+        phase1_beam=_env_int("GRAND_PHASE1_BEAM", 20),
         phase2_beam=_env_int("GRAND_PHASE2_BEAM", 12),
-        max_patterns=_env_int("GRAND_MAX_PATTERNS", 1536),
+        max_patterns=_env_int("GRAND_MAX_PATTERNS", 2048),
         ai_weight=_env_float("GRAND_AI_WEIGHT", 1.35),
         gain_weight=_env_float("GRAND_GAIN_WEIGHT", 0.22),
         osc_weight=_env_float("GRAND_OSC_WEIGHT", 0.16),
         llr_weight=_env_float("GRAND_LLR_WEIGHT", 1.0),
         sw_weight=_env_float("GRAND_SW_WEIGHT", 1.20),
-        info_bonus=_env_float("GRAND_INFO_BONUS", 0.55),
+        info_bonus=_env_float("GRAND_INFO_BONUS", 0.62),
         tx_bonus=_env_float("GRAND_TX_BONUS", 0.18),
-        latent_penalty=_env_float("GRAND_LATENT_PENALTY", 0.45),
+        punctured_info_bonus=_env_float("GRAND_PUNCTURED_INFO_BONUS", 0.34),
+        parity_penalty=_env_float("GRAND_PARITY_PENALTY", 0.08),
     )
     base_seed = _env_int("RNG_SEED_GLOBAL", 20260403)
     return RunConfig(
@@ -1710,7 +1726,7 @@ def main():
     code_cfg = build_sionna_5g_nr_code_cfg(run_cfg.k_info, run_cfg.n_tx, run_cfg.qm)
     _warmup(code_cfg, run_cfg.stage1_iters)
 
-    model_path = os.path.join(results_dir, f"aipcg_student_it{run_cfg.stage1_iters:02d}.npz")
+    model_path = os.path.join(results_dir, f"aipig_student_it{run_cfg.stage1_iters:02d}.npz")
     calib_meta = run_calibration(run_cfg, code_cfg, model_path)
     student = load_student(model_path) if calib_meta["model_ready"] else None
 
@@ -1720,7 +1736,7 @@ def main():
     for snr_db in run_cfg.eval_snr_db:
         res = evaluate_one_snr(run_cfg, code_cfg, float(snr_db), student)
         rows.append(res)
-        print("\n=== AIPCG HYBRID EVAL ===")
+        print("\n=== AIPIG HYBRID EVAL ===")
         print(f"SNR (dB)                    : {res['snr_db']:.2f}")
         print(f"Frames simulated            : {res['frames']}")
         print(f"LDPC FER / BER              : {res['ldpc_fer']:.6e} / {res['ldpc_ber']:.6e}")
@@ -1731,14 +1747,14 @@ def main():
         print(f"Info rescue rate | invoked  : {res['grand_info_rescue_rate_given_invoked']:.6f}")
         print(f"Parity-only rescue | invoked: {res['grand_parity_only_rescue_rate_given_invoked']:.6f}")
         print(f"Phase1 / Phase2 success     : {res['grand_phase1_success_rate_given_invoked']:.6f} / {res['grand_phase2_success_rate_given_invoked']:.6f}")
-        print(f"Pools info/txp/latent       : {res['avg_info_pool_per_failed_frame']:.2f} / {res['avg_tx_parity_pool_per_failed_frame']:.2f} / {res['avg_latent_pool_per_failed_frame']:.2f}")
+        print(f"Pools info/punc/txp         : {res['avg_info_pool_per_failed_frame']:.2f} / {res['avg_punctured_info_pool_per_failed_frame']:.2f} / {res['avg_tx_parity_pool_per_failed_frame']:.2f}")
         print(f"Avg GRAND patterns/failure  : {res['avg_grand_patterns_per_failed_frame']:.3f}")
         print(f"Avg phase1 / phase2 patterns: {res['avg_phase1_patterns_per_failed_frame']:.3f} / {res['avg_phase2_patterns_per_failed_frame']:.3f}")
         print(f"Avg stage-1 decoder us      : {res['avg_stage1_decoder_us']:.3f}")
         print(f"Avg GRAND decoder us        : {res['avg_grand_decoder_us']:.3f}")
         print(f"Avg total hybrid decoder us : {res['avg_total_hybrid_decoder_us']:.3f}")
 
-    prefix = f"aipcg_it{run_cfg.stage1_iters:02d}_{_now_tag()}"
+    prefix = f"aipig_it{run_cfg.stage1_iters:02d}_{_now_tag()}"
     summary_path = os.path.join(results_dir, f"{prefix}_summary.csv")
     raw_path = os.path.join(results_dir, f"{prefix}_raw.pkl")
     cfg_path = os.path.join(results_dir, f"{prefix}_config.json")
