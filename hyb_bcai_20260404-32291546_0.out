@@ -1,0 +1,147 @@
+{
+  "errors": {},
+  "python": "/scratch/rsadve1/venvs/grand5g/bin/python",
+  "status": {
+    "LDPC5GEncoder_ok": true,
+    "TDL_ok": true,
+    "numba_ok": true,
+    "numpy_ok": true,
+    "scipy_ok": true,
+    "sionna_ok": true
+  }
+}
+[SBATCH CONFIG] task=0 it=8 eval_snr=7.5,8.0,8.5,9.0,9.5 calib_snr=7.0,7.5,8.0,8.5
+[SBATCH CONFIG] channel=SIONNA_TDL tdl=C delay=2.0e-7 speed=[1.0,5.0] cfo=20.0 csi=nr_imperfect
+[SBATCH CONFIG] pools info/punc/txp=24/16/12 blocks=8 beam=48 exact_pool=64 max_w=18 free_dim=18
+[RUN] code=sionna5g_k1024_n2048_qm1 it=8 eval_snr=[7.5, 8.0, 8.5, 9.0, 9.5]
+[RUN] calib={'calib_total_frames': 3067, 'calib_failed_frames': 512, 'calib_bit_rows': 1859248, 'calib_block_rows': 26091, 'bit_model_ready': True, 'block_model_ready': True, 'bit_model_path': 'results/run_hybrid_ldpc_grand_bcai_20260404_it08_32291546_0/bcai_bit_student_it08.npz', 'block_model_path': 'results/run_hybrid_ldpc_grand_bcai_20260404_it08_32291546_0/bcai_block_student_it08.npz'}
+
+=== BCAI HYBRID EVAL ===
+SNR (dB)                         : 7.50
+Frames simulated                 : 1047
+LDPC FER / BER                   : 1.308500e-01 / 1.119176e-02
+Hybrid FER / BER                 : 1.146132e-01 / 1.119083e-02
+Avg stage-1 iters/frame          : 4.769
+Failed frame rate                : 0.130850
+Fallback invoked | failed        : 1.000000
+Avg invoke score | failed        : 1.000000
+GRAND invocation rate            : 0.130850
+GRAND rescue rate | invoked      : 0.124088
+Info rescue rate | invoked       : 0.007299
+Parity-only rescue | invoked     : 0.116788
+Info / parity round success      : 0.021898 / 0.072993
+Direct / prefix / global success : 0.000000 / 0.124088 / 0.000000
+Pools info/punc/txp | invoked    : 16.72 / 15.65 / 3.07
+Block patterns / prefixes        : 48.000 / 6.000
+Selected blocks / top prob       : 0.270 / 0.896
+Avg candidate pool | invoked     : 385.905
+Avg solver candidates | invoked  : 49.000
+Avg max free dim | invoked       : 0.000
+Avg stage-1 decoder us           : 3809.546
+Avg GRAND decoder us             : 82702.233
+Avg total hybrid decoder us      : 86511.780
+
+=== BCAI HYBRID EVAL ===
+SNR (dB)                         : 8.00
+Frames simulated                 : 1373
+LDPC FER / BER                   : 1.114348e-01 / 9.454092e-03
+Hybrid FER / BER                 : 8.739985e-02 / 9.451959e-03
+Avg stage-1 iters/frame          : 4.700
+Failed frame rate                : 0.111435
+Fallback invoked | failed        : 1.000000
+Avg invoke score | failed        : 1.000000
+GRAND invocation rate            : 0.111435
+GRAND rescue rate | invoked      : 0.215686
+Info rescue rate | invoked       : 0.006536
+Parity-only rescue | invoked     : 0.209150
+Info / parity round success      : 0.045752 / 0.130719
+Direct / prefix / global success : 0.006536 / 0.202614 / 0.006536
+Pools info/punc/txp | invoked    : 16.08 / 16.00 / 3.47
+Block patterns / prefixes        : 48.000 / 6.000
+Selected blocks / top prob       : 0.490 / 0.864
+Avg candidate pool | invoked     : 354.242
+Avg solver candidates | invoked  : 49.000
+Avg max free dim | invoked       : 0.000
+Avg stage-1 decoder us           : 3665.371
+Avg GRAND decoder us             : 69028.227
+Avg total hybrid decoder us      : 72693.598
+
+=== BCAI HYBRID EVAL ===
+SNR (dB)                         : 8.50
+Frames simulated                 : 1826
+LDPC FER / BER                   : 8.159912e-02 / 6.407020e-03
+Hybrid FER / BER                 : 6.571742e-02 / 6.407020e-03
+Avg stage-1 iters/frame          : 4.409
+Failed frame rate                : 0.081599
+Fallback invoked | failed        : 1.000000
+Avg invoke score | failed        : 1.000000
+GRAND invocation rate            : 0.081599
+GRAND rescue rate | invoked      : 0.194631
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.194631
+Info / parity round success      : 0.053691 / 0.087248
+Direct / prefix / global success : 0.013423 / 0.174497 / 0.006711
+Pools info/punc/txp | invoked    : 15.30 / 14.31 / 3.44
+Block patterns / prefixes        : 48.000 / 6.000
+Selected blocks / top prob       : 0.409 / 0.885
+Avg candidate pool | invoked     : 362.396
+Avg solver candidates | invoked  : 48.993
+Avg max free dim | invoked       : 0.000
+Avg stage-1 decoder us           : 3629.704
+Avg GRAND decoder us             : 54621.404
+Avg total hybrid decoder us      : 58251.108
+
+=== BCAI HYBRID EVAL ===
+SNR (dB)                         : 9.00
+Frames simulated                 : 2481
+LDPC FER / BER                   : 5.804111e-02 / 3.958995e-03
+Hybrid FER / BER                 : 4.836759e-02 / 3.958601e-03
+Avg stage-1 iters/frame          : 4.161
+Failed frame rate                : 0.058041
+Fallback invoked | failed        : 1.000000
+Avg invoke score | failed        : 1.000000
+GRAND invocation rate            : 0.058041
+GRAND rescue rate | invoked      : 0.166667
+Info rescue rate | invoked       : 0.006944
+Parity-only rescue | invoked     : 0.159722
+Info / parity round success      : 0.048611 / 0.048611
+Direct / prefix / global success : 0.027778 / 0.138889 / 0.000000
+Pools info/punc/txp | invoked    : 17.05 / 13.74 / 3.48
+Block patterns / prefixes        : 48.000 / 6.000
+Selected blocks / top prob       : 0.375 / 0.880
+Avg candidate pool | invoked     : 368.278
+Avg solver candidates | invoked  : 48.972
+Avg max free dim | invoked       : 0.000
+Avg stage-1 decoder us           : 3615.199
+Avg GRAND decoder us             : 36994.973
+Avg total hybrid decoder us      : 40610.172
+
+=== BCAI HYBRID EVAL ===
+SNR (dB)                         : 9.50
+Frames simulated                 : 2789
+LDPC FER / BER                   : 5.198996e-02 / 3.377177e-03
+Hybrid FER / BER                 : 4.302617e-02 / 3.376826e-03
+Avg stage-1 iters/frame          : 4.032
+Failed frame rate                : 0.051990
+Fallback invoked | failed        : 1.000000
+Avg invoke score | failed        : 1.000000
+GRAND invocation rate            : 0.051990
+GRAND rescue rate | invoked      : 0.172414
+Info rescue rate | invoked       : 0.006897
+Parity-only rescue | invoked     : 0.165517
+Info / parity round success      : 0.055172 / 0.103448
+Direct / prefix / global success : 0.006897 / 0.165517 / 0.000000
+Pools info/punc/txp | invoked    : 15.92 / 12.34 / 3.66
+Block patterns / prefixes        : 48.000 / 6.000
+Selected blocks / top prob       : 0.400 / 0.884
+Avg candidate pool | invoked     : 367.890
+Avg solver candidates | invoked  : 48.993
+Avg max free dim | invoked       : 0.000
+Avg stage-1 decoder us           : 3630.485
+Avg GRAND decoder us             : 31320.194
+Avg total hybrid decoder us      : 34950.679
+[SAVE] summary=results/run_hybrid_ldpc_grand_bcai_20260404_it08_32291546_0/bcai_it08_20260404-214319_summary.csv
+[SAVE] raw=results/run_hybrid_ldpc_grand_bcai_20260404_it08_32291546_0/bcai_it08_20260404-214319_raw.pkl
+[SAVE] config=results/run_hybrid_ldpc_grand_bcai_20260404_it08_32291546_0/bcai_it08_20260404-214319_config.json
+[SAVE] bit_model=results/run_hybrid_ldpc_grand_bcai_20260404_it08_32291546_0/bcai_bit_student_it08.npz
+[SAVE] block_model=results/run_hybrid_ldpc_grand_bcai_20260404_it08_32291546_0/bcai_block_student_it08.npz
