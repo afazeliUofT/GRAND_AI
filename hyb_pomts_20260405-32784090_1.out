@@ -1,0 +1,124 @@
+{
+  "errors": {},
+  "python": "/scratch/rsadve1/venvs/grand5g/bin/python",
+  "status": {
+    "LDPC5GEncoder_ok": true,
+    "TDL_ok": true,
+    "numba_ok": true,
+    "numpy_ok": true,
+    "scipy_ok": true,
+    "sionna_ok": true
+  }
+}
+[SBATCH CONFIG] task=1 it=15 eval_snr=7.0,7.5,8.0,8.5,9.0 calib_snr=6.75,7.25,7.75,8.25
+[SBATCH CONFIG] channel=SIONNA_TDL tdl=B delay=1.0e-7 speed=[0.5,2.0] cfo=12.0 csi=nr_imperfect
+[SBATCH CONFIG] pomts single_pool=64 blocks=12 pair_blocks=6 max_patterns=200000 queue=4096 max_atoms=4 max_support=128
+[RUN] code=sionna5g_k1024_n2048_qm1 it=15 eval_snr=[7.0, 7.5, 8.0, 8.5, 9.0]
+[RUN] calib={'calib_total_frames': 6262, 'calib_failed_frames': 800, 'calib_bit_rows': 3839494, 'calib_block_rows': 41190, 'bit_model_ready': True, 'block_model_ready': True, 'bit_model_path': 'results/run_hybrid_ldpc_grand_pomts_20260405_it15_32784090_1/pomts_bit_student_it15.npz', 'block_model_path': 'results/run_hybrid_ldpc_grand_pomts_20260405_it15_32784090_1/pomts_block_student_it15.npz', 'pattern_stats_path': 'results/run_hybrid_ldpc_grand_pomts_20260405_it15_32784090_1/pomts_pattern_stats_it15.npz', 'size_choices': [2, 4, 8, 12, 16, 24, 32]}
+[RUN] pomts max_patterns=200000 single_pool=64 top_blocks=12 pair_top_blocks=6
+
+=== POMTS HYBRID EVAL ===
+SNR (dB)                         : 7.00
+Frames simulated                 : 908
+LDPC FER / BER                   : 1.134361e-01 / 2.091436e-02
+Hybrid FER / BER                 : 1.101322e-01 / 2.091436e-02
+Avg stage-1 iters/frame          : 5.955
+Failed frame rate                : 0.113436
+GRAND invocation rate            : 0.113436
+GRAND rescue rate | invoked      : 0.029126
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.029126
+Avg patterns tested | invoked    : 189984.602
+Avg atoms total | invoked        : 142.000
+Avg queue max | invoked          : 457.379
+Avg zero-synd candidates | inv   : 0.029
+Success pattern weight / atoms   : 1.333 / 1.333
+Avg stage-1 decoder us           : 260244.784
+Avg GRAND decoder us             : 5190004.586
+Avg total hybrid decoder us      : 848978.785
+
+=== POMTS HYBRID EVAL ===
+SNR (dB)                         : 7.50
+Frames simulated                 : 1493
+LDPC FER / BER                   : 6.764903e-02 / 1.207981e-02
+Hybrid FER / BER                 : 6.697924e-02 / 1.207981e-02
+Avg stage-1 iters/frame          : 5.232
+Failed frame rate                : 0.067649
+GRAND invocation rate            : 0.067649
+GRAND rescue rate | invoked      : 0.009901
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.009901
+Avg patterns tested | invoked    : 196180.792
+Avg atoms total | invoked        : 142.000
+Avg queue max | invoked          : 529.386
+Avg zero-synd candidates | inv   : 0.010
+Success pattern weight / atoms   : 1.000 / 1.000
+Avg stage-1 decoder us           : 223767.723
+Avg GRAND decoder us             : 5233276.010
+Avg total hybrid decoder us      : 577793.762
+
+=== POMTS HYBRID EVAL ===
+SNR (dB)                         : 8.00
+Frames simulated                 : 1694
+LDPC FER / BER                   : 5.903188e-02 / 1.058077e-02
+Hybrid FER / BER                 : 5.903188e-02 / 1.058077e-02
+Avg stage-1 iters/frame          : 5.062
+Failed frame rate                : 0.059032
+GRAND invocation rate            : 0.059032
+GRAND rescue rate | invoked      : 0.000000
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.000000
+Avg patterns tested | invoked    : 199053.920
+Avg atoms total | invoked        : 142.000
+Avg queue max | invoked          : 283.280
+Avg zero-synd candidates | inv   : 0.000
+Success pattern weight / atoms   : 0.000 / 0.000
+Avg stage-1 decoder us           : 217881.184
+Avg GRAND decoder us             : 5392873.771
+Avg total hybrid decoder us      : 536232.646
+
+=== POMTS HYBRID EVAL ===
+SNR (dB)                         : 8.50
+Frames simulated                 : 1973
+LDPC FER / BER                   : 5.169792e-02 / 8.933097e-03
+Hybrid FER / BER                 : 5.068424e-02 / 8.933097e-03
+Avg stage-1 iters/frame          : 4.789
+Failed frame rate                : 0.051698
+GRAND invocation rate            : 0.051698
+GRAND rescue rate | invoked      : 0.019608
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.019608
+Avg patterns tested | invoked    : 194390.127
+Avg atoms total | invoked        : 142.000
+Avg queue max | invoked          : 280.961
+Avg zero-synd candidates | inv   : 0.020
+Success pattern weight / atoms   : 1.000 / 1.000
+Avg stage-1 decoder us           : 212605.102
+Avg GRAND decoder us             : 5220564.024
+Avg total hybrid decoder us      : 482497.414
+
+=== POMTS HYBRID EVAL ===
+SNR (dB)                         : 9.00
+Frames simulated                 : 2448
+LDPC FER / BER                   : 4.125817e-02 / 7.309858e-03
+Hybrid FER / BER                 : 4.084967e-02 / 7.309858e-03
+Avg stage-1 iters/frame          : 4.411
+Failed frame rate                : 0.041258
+GRAND invocation rate            : 0.041258
+GRAND rescue rate | invoked      : 0.009901
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.009901
+Avg patterns tested | invoked    : 194687.782
+Avg atoms total | invoked        : 142.000
+Avg queue max | invoked          : 366.376
+Avg zero-synd candidates | inv   : 0.010
+Success pattern weight / atoms   : 1.000 / 1.000
+Avg stage-1 decoder us           : 170730.352
+Avg GRAND decoder us             : 5221067.223
+Avg total hybrid decoder us      : 386142.030
+[SAVE] summary=results/run_hybrid_ldpc_grand_pomts_20260405_it15_32784090_1/pomts_it15_20260405-223018_summary.csv
+[SAVE] raw=results/run_hybrid_ldpc_grand_pomts_20260405_it15_32784090_1/pomts_it15_20260405-223018_raw.pkl
+[SAVE] config=results/run_hybrid_ldpc_grand_pomts_20260405_it15_32784090_1/pomts_it15_20260405-223018_config.json
+[SAVE] bit_model=results/run_hybrid_ldpc_grand_pomts_20260405_it15_32784090_1/pomts_bit_student_it15.npz
+[SAVE] block_model=results/run_hybrid_ldpc_grand_pomts_20260405_it15_32784090_1/pomts_block_student_it15.npz
+[SAVE] pattern_stats=results/run_hybrid_ldpc_grand_pomts_20260405_it15_32784090_1/pomts_pattern_stats_it15.npz
