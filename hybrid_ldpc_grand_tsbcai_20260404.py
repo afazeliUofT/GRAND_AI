@@ -228,6 +228,14 @@ class HybridConfig:
     direct_top_bits: int = 6
     exact_pool_cap: int = 56
     block_mask_variants: int = 6
+    traj_depth: int = 5
+    traj_try_top: int = 2
+    traj_info_weight: float = 2.20
+    traj_punctured_weight: float = 1.35
+    traj_parity_weight: float = 0.45
+    traj_synd_weight: float = 0.10
+    traj_best_scale: float = 1.80
+    traj_second_scale: float = 1.25
 
 @dataclass
 class RunConfig:
@@ -1069,6 +1077,140 @@ def _feature_pack(code_cfg: CodeConfig, llr_final: np.ndarray, hard_final: np.nd
         axis=1,
     ).astype(np.float32)
     return feat
+
+
+def _snapshot_iter_list(stage1_iters: int, depth: int) -> List[int]:
+    depth = max(1, int(depth))
+    start = max(1, int(stage1_iters) - depth + 1)
+    return list(range(start, int(stage1_iters) + 1))
+
+
+def _snapshot_state(
+    snapshots: Dict[str, Dict[int, np.ndarray]],
+    target_it: int,
+    fallback_llr: np.ndarray,
+    fallback_hard: np.ndarray,
+    fallback_syndrome: np.ndarray,
+):
+    llr_t = snapshots["llr"].get(int(target_it), fallback_llr)
+    hard_t = snapshots["hard_bits"].get(int(target_it), fallback_hard)
+    synd_t = snapshots["syndrome"].get(int(target_it), fallback_syndrome)
+    return llr_t, hard_t, synd_t
+
+
+def _feature_pack_for_target(
+    code_cfg: CodeConfig,
+    snapshots: Dict[str, Dict[int, np.ndarray]],
+    target_it: int,
+    fallback_llr: np.ndarray,
+    fallback_hard: np.ndarray,
+    fallback_syndrome: np.ndarray,
+) -> np.ndarray:
+    llr_t, hard_t, synd_t = _snapshot_state(snapshots, int(target_it), fallback_llr, fallback_hard, fallback_syndrome)
+    prev1 = max(1, int(target_it) - 1)
+    prev2 = max(1, int(target_it) - 2)
+    llr_a = snapshots["llr"].get(prev2, llr_t)
+    llr_b = snapshots["llr"].get(prev1, llr_t)
+    hb_a = snapshots["hard_bits"].get(prev2, hard_t)
+    hb_b = snapshots["hard_bits"].get(prev1, hard_t)
+    abs_t = np.abs(llr_t).astype(np.float32)
+    mean_abs = float(abs_t.mean() + 1e-6)
+    delta1 = np.abs(llr_t - llr_b).astype(np.float32)
+    delta2 = np.abs(llr_b - llr_a).astype(np.float32)
+    flip_rate = ((hb_a != hb_b).astype(np.float32) + (hb_b != hard_t).astype(np.float32)) * 0.5
+    weak_thr = float(np.quantile(abs_t, 0.25)) if abs_t.size > 0 else 0.0
+    weak_mask = abs_t <= weak_thr
+    unsat_mask = synd_t.astype(bool)
+    check_degree = code_cfg._check_degree
+    bit_degree = np.maximum(1, code_cfg._bit_degree).astype(np.float32)
+    weak_per_check = np.zeros(code_cfg.M, dtype=np.float32)
+    for c in range(code_cfg.M):
+        vs = code_cfg.checks_to_vars[c]
+        weak_per_check[c] = float(np.sum(weak_mask[vs]))
+    unsat_count = np.zeros(code_cfg.N, dtype=np.float32)
+    weighted_unsat = np.zeros(code_cfg.N, dtype=np.float32)
+    local_weak_frac = np.zeros(code_cfg.N, dtype=np.float32)
+    for v in range(code_cfg.N):
+        cn = code_cfg.vars_to_checks[v]
+        if cn.size == 0:
+            continue
+        uc = 0.0
+        wu = 0.0
+        weak_num = 0.0
+        weak_den = 0.0
+        for c in cn:
+            c = int(c)
+            if unsat_mask[c]:
+                uc += 1.0
+                wu += 1.0 / float(max(1, check_degree[c]))
+                weak_num += float(weak_per_check[c])
+                weak_den += float(check_degree[c])
+        unsat_count[v] = uc
+        weighted_unsat[v] = wu
+        if weak_den > 0.0:
+            local_weak_frac[v] = weak_num / weak_den
+    gain_norm = (2.0 * unsat_count - bit_degree) / bit_degree
+    global_synd_ratio = float(np.mean(unsat_mask.astype(np.float32)))
+    global_flip_ratio = float(np.mean(flip_rate))
+    global_mean_abs = float(mean_abs / (1.0 + mean_abs))
+    feat = np.stack(
+        [
+            1.0 / (1.0 + abs_t),
+            abs_t / mean_abs,
+            delta1 / mean_abs,
+            delta2 / mean_abs,
+            flip_rate,
+            hard_t.astype(np.float32),
+            unsat_count / bit_degree,
+            gain_norm,
+            weighted_unsat,
+            local_weak_frac,
+            code_cfg._cycle4_norm,
+            code_cfg._twohop_norm,
+            np.full(code_cfg.N, global_synd_ratio, dtype=np.float32),
+            np.full(code_cfg.N, global_mean_abs, dtype=np.float32),
+            np.full(code_cfg.N, global_flip_ratio, dtype=np.float32),
+            code_cfg._tx_mask.astype(np.float32),
+            code_cfg._info_mask.astype(np.float32),
+            code_cfg._tx_info_mask.astype(np.float32),
+            code_cfg._punctured_info_mask.astype(np.float32),
+            code_cfg._tx_parity_mask.astype(np.float32),
+            code_cfg._latent_mask.astype(np.float32),
+        ],
+        axis=1,
+    ).astype(np.float32)
+    return feat
+
+
+def _trajectory_oracle_cost(code_cfg: CodeConfig, hard_bits: np.ndarray, syndrome_bits: np.ndarray, cfg: HybridConfig) -> float:
+    mask = hard_bits.astype(bool)
+    info_cnt = float(np.sum(mask & code_cfg._tx_info_mask.astype(bool)))
+    punct_cnt = float(np.sum(mask & code_cfg._punctured_info_mask.astype(bool)))
+    parity_cnt = float(np.sum(mask & code_cfg._tx_parity_mask.astype(bool)))
+    synd_cnt = float(np.sum(syndrome_bits))
+    return (
+        float(cfg.traj_info_weight) * info_cnt
+        + float(cfg.traj_punctured_weight) * punct_cnt
+        + float(cfg.traj_parity_weight) * parity_cnt
+        + float(cfg.traj_synd_weight) * synd_cnt
+    )
+
+
+def _trajectory_proxy_score(frame_feat: np.ndarray, target_it: int, stage1_iters: int) -> float:
+    iter_norm = float(target_it) / float(max(1, stage1_iters))
+    score = (
+        -3.0 * float(frame_feat[0])
+        -4.2 * float(frame_feat[2])
+        -2.0 * float(frame_feat[3])
+        -1.0 * float(frame_feat[4])
+        -0.5 * float(frame_feat[9])
+        +1.2 * float(frame_feat[10])
+        +0.8 * float(frame_feat[11])
+        +0.5 * float(frame_feat[12])
+        -0.3 * float(frame_feat[13])
+        +0.10 * (1.0 - iter_norm)
+    )
+    return float(_sigmoid(np.array([score], dtype=np.float32))[0])
 
 
 def _collect_training_rows(feat: np.ndarray, labels: np.ndarray, llr_final: np.ndarray, syndrome_final: np.ndarray, cfg: CalibrationConfig, seed: int):
@@ -2160,7 +2302,7 @@ def _warmup(code_cfg: CodeConfig, stage1_iters: int):
     llr = np.ones(code_cfg.N, dtype=np.float32)
     llr[: min(16, code_cfg.N)] = -0.5
     dec_cfg = DecoderConfig(max_iters=int(stage1_iters), alpha=float(_env_float("LDPC_ALPHA", 0.80)), early_stop=True)
-    snapshot_iters = sorted(set([max(1, stage1_iters - 2), max(1, stage1_iters - 1), stage1_iters]))
+    snapshot_iters = _snapshot_iter_list(stage1_iters, HybridConfig().traj_depth)
     hard, llr_post, synd, _, snaps = ldpc_min_sum_decode(llr, code_cfg, dec_cfg, snapshot_iters=snapshot_iters)
     feat = _feature_pack(code_cfg, llr_post, hard, synd, snaps, int(stage1_iters))
     heur_prob = student_prob(None, feat)
@@ -2186,13 +2328,14 @@ def _heuristic_base_score(code_cfg: CodeConfig, llr_final: np.ndarray, feat: np.
     return _bit_search_base_score(code_cfg, llr_final, student_prob(None, feat), feat, HybridConfig())
 
 
-def run_calibration(run_cfg: RunConfig, code_cfg: CodeConfig, bit_model_path: str, block_model_path: str) -> Dict[str, Any]:
+def run_calibration(run_cfg: RunConfig, code_cfg: CodeConfig, bit_model_path: str, block_model_path: str, snapshot_model_path: str) -> Dict[str, Any]:
     bit_rows: List[Tuple[np.ndarray, np.ndarray, np.ndarray]] = []
     block_rows: List[Tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    traj_rows: List[Tuple[np.ndarray, int]] = []
     fail_frames = 0
     total_frames = 0
     dec_cfg = DecoderConfig(max_iters=int(run_cfg.stage1_iters), alpha=float(run_cfg.alpha), early_stop=True)
-    snapshot_iters = sorted(set([max(1, run_cfg.stage1_iters - 2), max(1, run_cfg.stage1_iters - 1), run_cfg.stage1_iters]))
+    snapshot_iters = _snapshot_iter_list(run_cfg.stage1_iters, run_cfg.hybrid.traj_depth)
     for snr_db in run_cfg.calib_snr_db:
         frame = 0
         while total_frames < int(run_cfg.calib.max_frames) and fail_frames < int(run_cfg.calib.target_failed_frames):
@@ -2201,26 +2344,51 @@ def run_calibration(run_cfg: RunConfig, code_cfg: CodeConfig, bit_model_path: st
             hard, llr_post, synd, _, snaps = ldpc_min_sum_decode(llr, code_cfg, dec_cfg, snapshot_iters=snapshot_iters)
             total_frames += 1
             if int(np.sum(synd)) != 0:
-                feat = _feature_pack(code_cfg, llr_post, hard, synd, snaps, run_cfg.stage1_iters)
-                # Under the standard all-zero codeword simulation, the residual error pattern equals the hard output.
-                labels = hard.astype(np.float32).copy()
-                labels[code_cfg._filler_mask.astype(bool)] = 0.0
-                packed = _collect_training_rows(feat, labels, llr_post, synd, run_cfg.calib, seed + 7)
-                if packed is not None:
-                    bit_rows.append(packed)
-                heur_prob = student_prob(None, feat)
-                base_score = _bit_search_base_score(code_cfg, llr_post, heur_prob, feat, run_cfg.hybrid)
-                blk_feat = _block_feature_pack(code_cfg, feat, llr_post, hard, base_score)
-                if blk_feat.shape[0] > 0:
-                    blk_labels = np.zeros((blk_feat.shape[0],), dtype=np.float32)
-                    for b in range(blk_feat.shape[0]):
-                        idx = np.flatnonzero((code_cfg._block_ids == b) & (~code_cfg._filler_mask.astype(bool)))
-                        if idx.size == 0:
-                            continue
-                        blk_labels[b] = float(np.sum(labels[idx]) > 0.0)
-                    blk_packed = _collect_block_training_rows(blk_feat, blk_labels, run_cfg.calib, seed + 19)
-                    if blk_packed is not None:
-                        block_rows.append(blk_packed)
+                cand_states: List[Dict[str, Any]] = []
+                for target_it in snapshot_iters:
+                    llr_t, hard_t, synd_t = _snapshot_state(snaps, target_it, llr_post, hard, synd)
+                    feat_t = _feature_pack_for_target(code_cfg, snaps, target_it, llr_post, hard, synd)
+                    labels = hard_t.astype(np.float32).copy()
+                    labels[code_cfg._filler_mask.astype(bool)] = 0.0
+                    heur_prob = student_prob(None, feat_t)
+                    base_score = _bit_search_base_score(code_cfg, llr_t, heur_prob, feat_t, run_cfg.hybrid)
+                    frame_feat = _frame_feature_vec(code_cfg, hard_t, llr_t, synd_t, feat_t, base_score)
+                    oracle_cost = _trajectory_oracle_cost(code_cfg, hard_t, synd_t, run_cfg.hybrid)
+                    cand_states.append({
+                        "it": int(target_it),
+                        "llr": llr_t,
+                        "hard": hard_t,
+                        "synd": synd_t,
+                        "feat": feat_t,
+                        "labels": labels,
+                        "frame_feat": frame_feat,
+                        "oracle_cost": float(oracle_cost),
+                    })
+                cand_states.sort(key=lambda d: (float(d["oracle_cost"]), -int(d["it"])))
+                for idx, st in enumerate(cand_states):
+                    traj_rows.append((st["frame_feat"], int(idx == 0)))
+                top_keep = min(max(1, int(run_cfg.hybrid.traj_try_top)), len(cand_states))
+                for idx, st in enumerate(cand_states[:top_keep]):
+                    packed = _collect_training_rows(st["feat"], st["labels"], st["llr"], st["synd"], run_cfg.calib, seed + 7 + 101 * idx)
+                    if packed is not None:
+                        X, y, w = packed
+                        scale = float(run_cfg.hybrid.traj_best_scale) if idx == 0 else float(run_cfg.hybrid.traj_second_scale)
+                        bit_rows.append((X, y, (w * scale).astype(np.float32)))
+                    heur_prob = student_prob(None, st["feat"])
+                    base_score = _bit_search_base_score(code_cfg, st["llr"], heur_prob, st["feat"], run_cfg.hybrid)
+                    blk_feat = _block_feature_pack(code_cfg, st["feat"], st["llr"], st["hard"], base_score)
+                    if blk_feat.shape[0] > 0:
+                        blk_labels = np.zeros((blk_feat.shape[0],), dtype=np.float32)
+                        for b in range(blk_feat.shape[0]):
+                            idxs = np.flatnonzero((code_cfg._block_ids == b) & (~code_cfg._filler_mask.astype(bool)))
+                            if idxs.size == 0:
+                                continue
+                            blk_labels[b] = float(np.sum(st["labels"][idxs]) > 0.0)
+                        blk_packed = _collect_block_training_rows(blk_feat, blk_labels, run_cfg.calib, seed + 19 + 211 * idx)
+                        if blk_packed is not None:
+                            Xb, yb, wb = blk_packed
+                            scale = float(run_cfg.hybrid.traj_best_scale) if idx == 0 else float(run_cfg.hybrid.traj_second_scale)
+                            block_rows.append((Xb, yb, (wb * scale).astype(np.float32)))
                 fail_frames += 1
             frame += 1
             if fail_frames >= int(run_cfg.calib.target_failed_frames):
@@ -2229,19 +2397,25 @@ def run_calibration(run_cfg: RunConfig, code_cfg: CodeConfig, bit_model_path: st
             break
     bit_student = train_ai_ranker(bit_rows, run_cfg.calib, seed=run_cfg.base_seed + 701)
     block_student_obj = train_block_ranker(block_rows, run_cfg.calib, seed=run_cfg.base_seed + 1701)
+    snapshot_student = train_frame_gate(traj_rows, run_cfg.calib, seed=run_cfg.base_seed + 2701)
     if bit_student is not None:
         save_student(bit_model_path, bit_student)
     if block_student_obj is not None:
         save_block_student(block_model_path, block_student_obj)
+    if snapshot_student is not None:
+        save_gate_student(snapshot_model_path, snapshot_student)
     return {
         "calib_total_frames": int(total_frames),
         "calib_failed_frames": int(fail_frames),
         "calib_bit_rows": int(sum(r[0].shape[0] for r in bit_rows)) if bit_rows else 0,
         "calib_block_rows": int(sum(r[0].shape[0] for r in block_rows)) if block_rows else 0,
+        "calib_snapshot_rows": int(len(traj_rows)),
         "bit_model_ready": bool(bit_student is not None),
         "block_model_ready": bool(block_student_obj is not None),
+        "snapshot_model_ready": bool(snapshot_student is not None),
         "bit_model_path": bit_model_path,
         "block_model_path": block_model_path,
+        "snapshot_model_path": snapshot_model_path,
     }
 
 
@@ -2260,9 +2434,10 @@ def evaluate_one_snr(
     snr_db: float,
     bit_student: Optional[DistilledLinearStudent],
     block_student_obj: Optional[DistilledLinearStudent],
+    snapshot_student: Optional[DistilledLinearStudent],
 ) -> Dict[str, Any]:
     dec_cfg = DecoderConfig(max_iters=int(run_cfg.stage1_iters), alpha=float(run_cfg.alpha), early_stop=True)
-    snapshot_iters = sorted(set([max(1, run_cfg.stage1_iters - 2), max(1, run_cfg.stage1_iters - 1), run_cfg.stage1_iters]))
+    snapshot_iters = _snapshot_iter_list(run_cfg.stage1_iters, run_cfg.hybrid.traj_depth)
 
     frames = 0
     ldpc_bit_errors = 0
@@ -2294,6 +2469,11 @@ def evaluate_one_snr(
     prefixes_kept_total = 0
     selected_blocks_total = 0
     top_block_prob_total = 0.0
+    snapshots_tried_total = 0
+    first_snapshot_iter_total = 0
+    success_snapshot_iter_total = 0
+    first_snapshot_successes = 0
+    second_snapshot_successes = 0
 
     while frames < int(run_cfg.mc.max_frames):
         seed = _stable_seed(run_cfg.base_seed, "eval", run_cfg.stage1_iters, snr_db, frames)
@@ -2314,42 +2494,76 @@ def evaluate_one_snr(
             grand_invocations += 1
             gate_positive += 1
             gate_prob_sum += 1.0
-            feat = _feature_pack(code_cfg, llr_post, hard, synd, snaps, run_cfg.stage1_iters)
-            bit_prob_vec = student_prob(bit_student, feat)
-            t1 = time.perf_counter()
-            res = ai_guided_grand(code_cfg, hard, llr_post, synd, bit_prob_vec, feat, run_cfg.hybrid, block_student=block_student_obj)
-            grand_time += time.perf_counter() - t1
-            solver_candidates_total += int(res.get("candidates_tested", 0))
-            candidate_pool_total += int(res.get("aggregate_pool_size", 0))
-            max_free_dim_total += int(res.get("max_free_dim_seen", 0))
-            pool_info_total += int(res.get("pool_info", 0))
-            pool_tx_parity_total += int(res.get("pool_tx_parity", 0))
-            pool_punctured_info_total += int(res.get("pool_punctured_info", 0))
-            direct_patterns_total += int(res.get("direct_patterns_tested", 0))
-            prefixes_kept_total += int(res.get("prefixes_kept", 0))
-            selected_blocks_total += int(res.get("selected_blocks", 0))
-            top_block_prob_total += float(res.get("top_block_prob", 0.0))
-            if res.get("success", False):
-                final_bits = res["bits"]
-                grand_rescues += 1
-                sr = str(res.get("success_round", ""))
-                if sr == "block_direct":
-                    block_direct_successes += 1
-                elif sr == "prefix_exact":
-                    prefix_exact_successes += 1
-                elif sr == "global_exact":
-                    global_exact_successes += 1
-                pattern = tuple(res.get("pattern", tuple()))
-                if pattern:
-                    info_flips = int(np.sum(code_cfg._tx_info_mask[np.asarray(pattern, dtype=np.int32)]))
-                    punct_info_flips = int(np.sum(code_cfg._punctured_info_mask[np.asarray(pattern, dtype=np.int32)]))
-                    parity_flips = int(np.sum(code_cfg._tx_parity_mask[np.asarray(pattern, dtype=np.int32)]))
-                else:
-                    info_flips = punct_info_flips = parity_flips = 0
-                if (info_flips + punct_info_flips) > 0:
-                    info_round_successes += 1
-                elif parity_flips > 0:
-                    parity_round_successes += 1
+            cand_states: List[Dict[str, Any]] = []
+            for target_it in snapshot_iters:
+                llr_t, hard_t, synd_t = _snapshot_state(snaps, target_it, llr_post, hard, synd)
+                feat_t = _feature_pack_for_target(code_cfg, snaps, target_it, llr_post, hard, synd)
+                bit_prob_vec = student_prob(bit_student, feat_t)
+                base_score = _bit_search_base_score(code_cfg, llr_t, bit_prob_vec, feat_t, run_cfg.hybrid)
+                frame_feat = _frame_feature_vec(code_cfg, hard_t, llr_t, synd_t, feat_t, base_score)
+                selector_prob = frame_gate_prob(snapshot_student, frame_feat)
+                proxy_prob = _trajectory_proxy_score(frame_feat, target_it, run_cfg.stage1_iters)
+                score = 0.75 * selector_prob + 0.25 * proxy_prob
+                cand_states.append({
+                    "it": int(target_it),
+                    "llr": llr_t,
+                    "hard": hard_t,
+                    "synd": synd_t,
+                    "feat": feat_t,
+                    "bit_prob": bit_prob_vec,
+                    "selector_prob": float(selector_prob),
+                    "proxy_prob": float(proxy_prob),
+                    "score": float(score),
+                })
+            cand_states.sort(key=lambda d: (-float(d["score"]), -int(d["it"])))
+            if cand_states:
+                first_snapshot_iter_total += int(cand_states[0]["it"])
+            tried = 0
+            success_rank = -1
+            for rank, st in enumerate(cand_states[: max(1, int(run_cfg.hybrid.traj_try_top))]):
+                tried += 1
+                t1 = time.perf_counter()
+                res = ai_guided_grand(code_cfg, st["hard"], st["llr"], st["synd"], st["bit_prob"], st["feat"], run_cfg.hybrid, block_student=block_student_obj)
+                grand_time += time.perf_counter() - t1
+                solver_candidates_total += int(res.get("candidates_tested", 0))
+                candidate_pool_total += int(res.get("aggregate_pool_size", 0))
+                max_free_dim_total += int(res.get("max_free_dim_seen", 0))
+                pool_info_total += int(res.get("pool_info", 0))
+                pool_tx_parity_total += int(res.get("pool_tx_parity", 0))
+                pool_punctured_info_total += int(res.get("pool_punctured_info", 0))
+                direct_patterns_total += int(res.get("direct_patterns_tested", 0))
+                prefixes_kept_total += int(res.get("prefixes_kept", 0))
+                selected_blocks_total += int(res.get("selected_blocks", 0))
+                top_block_prob_total += float(res.get("top_block_prob", 0.0))
+                if res.get("success", False):
+                    final_bits = res["bits"]
+                    grand_rescues += 1
+                    success_rank = rank
+                    success_snapshot_iter_total += int(st["it"])
+                    sr = str(res.get("success_round", ""))
+                    if sr == "block_direct":
+                        block_direct_successes += 1
+                    elif sr == "prefix_exact":
+                        prefix_exact_successes += 1
+                    elif sr == "global_exact":
+                        global_exact_successes += 1
+                    pattern = tuple(res.get("pattern", tuple()))
+                    if pattern:
+                        info_flips = int(np.sum(code_cfg._tx_info_mask[np.asarray(pattern, dtype=np.int32)]))
+                        punct_info_flips = int(np.sum(code_cfg._punctured_info_mask[np.asarray(pattern, dtype=np.int32)]))
+                        parity_flips = int(np.sum(code_cfg._tx_parity_mask[np.asarray(pattern, dtype=np.int32)]))
+                    else:
+                        info_flips = punct_info_flips = parity_flips = 0
+                    if (info_flips + punct_info_flips) > 0:
+                        info_round_successes += 1
+                    elif parity_flips > 0:
+                        parity_round_successes += 1
+                    break
+            snapshots_tried_total += int(tried)
+            if success_rank == 0:
+                first_snapshot_successes += 1
+            elif success_rank == 1:
+                second_snapshot_successes += 1
 
         e_hyb = _info_errors(final_bits, code_cfg)
         hyb_bit_errors += e_hyb
@@ -2398,6 +2612,11 @@ def evaluate_one_snr(
         "avg_prefixes_kept_per_invoked": float(prefixes_kept_total / grand_invocations) if grand_invocations > 0 else 0.0,
         "avg_selected_blocks_per_invoked": float(selected_blocks_total / grand_invocations) if grand_invocations > 0 else 0.0,
         "avg_top_block_prob_per_invoked": float(top_block_prob_total / grand_invocations) if grand_invocations > 0 else 0.0,
+        "avg_snapshots_tried_per_invoked": float(snapshots_tried_total / grand_invocations) if grand_invocations > 0 else 0.0,
+        "avg_first_snapshot_iter_given_invoked": float(first_snapshot_iter_total / grand_invocations) if grand_invocations > 0 else 0.0,
+        "avg_success_snapshot_iter_given_rescue": float(success_snapshot_iter_total / grand_rescues) if grand_rescues > 0 else 0.0,
+        "grand_first_snapshot_success_rate_given_invoked": float(first_snapshot_successes / grand_invocations) if grand_invocations > 0 else 0.0,
+        "grand_second_snapshot_success_rate_given_invoked": float(second_snapshot_successes / grand_invocations) if grand_invocations > 0 else 0.0,
         "avg_stage1_decoder_us": float(1e6 * stage1_time / frames) if frames > 0 else 0.0,
         "avg_grand_decoder_us": float(1e6 * grand_time / frames) if frames > 0 else 0.0,
         "avg_total_hybrid_decoder_us": float(1e6 * (stage1_time + grand_time) / frames) if frames > 0 else 0.0,
@@ -2429,16 +2648,16 @@ def build_run_config(results_dir: str) -> RunConfig:
     n_tx = _env_int("SIONNA_5G_N", 2048)
     qm = _env_int("SIONNA_5G_QM", 1)
     alpha = _env_float("LDPC_ALPHA", 0.80)
-    eval_snr_db = _env_csv_floats("EVAL_SNR_SWEEP", "8.5,9.0,9.5,10.0")
+    eval_snr_db = _env_csv_floats("EVAL_SNR_SWEEP", "8.0,8.5,9.0,9.5")
     calib_snr_db = _env_csv_floats("CALIB_SNR_SWEEP", ",".join(str(x) for x in eval_snr_db[: max(3, min(5, len(eval_snr_db)))]))
     mc = MCConfig(
         target_frame_errors=_env_int("TARGET_FRAME_ERRORS", 120),
-        max_frames=_env_int("MAX_FRAMES", 150000),
+        max_frames=_env_int("MAX_FRAMES", 180000),
         min_frames=_env_int("MIN_FRAMES", 0),
     )
     calib = CalibrationConfig(
-        target_failed_frames=_env_int("CALIB_TARGET_FAILED_FRAMES", 512),
-        max_frames=_env_int("CALIB_MAX_FRAMES", 220000),
+        target_failed_frames=_env_int("CALIB_TARGET_FAILED_FRAMES", 640),
+        max_frames=_env_int("CALIB_MAX_FRAMES", 260000),
         neg_ratio=_env_float("CALIB_NEG_RATIO", 6.0),
         hard_negative_cap=_env_int("CALIB_HARD_NEG_CAP", 128),
         teacher_hidden=_env_int("AI_TEACHER_HIDDEN", 64),
@@ -2448,46 +2667,54 @@ def build_run_config(results_dir: str) -> RunConfig:
         teacher_lr=_env_float("AI_TEACHER_LR", 0.01),
         student_lr=_env_float("AI_STUDENT_LR", 0.022),
         temperature=_env_float("AI_DISTILL_TEMP", 2.5),
-        calib_tx_info_pool=_env_int("CALIB_TX_INFO_POOL", 26),
-        calib_punctured_info_pool=_env_int("CALIB_PUNCTURED_INFO_POOL", 14),
-        calib_tx_parity_pool=_env_int("CALIB_TX_PARITY_POOL", 12),
-        calib_weight_cap=_env_int("CALIB_WEIGHT_CAP", 10),
-        calib_free_dim_cap=_env_int("CALIB_FREE_DIM_CAP", 12),
-        calib_max_candidates=_env_int("CALIB_MAX_CANDIDATES", 4096),
+        calib_tx_info_pool=_env_int("CALIB_TX_INFO_POOL", 32),
+        calib_punctured_info_pool=_env_int("CALIB_PUNCTURED_INFO_POOL", 18),
+        calib_tx_parity_pool=_env_int("CALIB_TX_PARITY_POOL", 14),
+        calib_weight_cap=_env_int("CALIB_WEIGHT_CAP", 12),
+        calib_free_dim_cap=_env_int("CALIB_FREE_DIM_CAP", 14),
+        calib_max_candidates=_env_int("CALIB_MAX_CANDIDATES", 8192),
     )
     hybrid = HybridConfig(
-        tx_info_pool=_env_int("GRAND_TX_INFO_POOL", 24),
+        tx_info_pool=_env_int("GRAND_TX_INFO_POOL", 26),
         tx_parity_pool=_env_int("GRAND_TX_PARITY_POOL", 12),
-        punctured_info_pool=_env_int("GRAND_PUNCTURED_INFO_POOL", 16),
-        round2_extra_info=_env_int("GRAND_ROUND2_EXTRA_INFO", 10),
+        punctured_info_pool=_env_int("GRAND_PUNCTURED_INFO_POOL", 18),
+        round2_extra_info=_env_int("GRAND_ROUND2_EXTRA_INFO", 12),
         round2_extra_punctured=_env_int("GRAND_ROUND2_EXTRA_PUNCTURED", 8),
         round2_extra_parity=_env_int("GRAND_ROUND2_EXTRA_PARITY", 6),
-        max_weight=_env_int("GRAND_MAX_WEIGHT", 18),
-        free_dim_cap=_env_int("GRAND_FREE_DIM_CAP", 18),
-        max_patterns=_env_int("GRAND_MAX_PATTERNS", 4096),
+        max_weight=_env_int("GRAND_MAX_WEIGHT", 20),
+        free_dim_cap=_env_int("GRAND_FREE_DIM_CAP", 20),
+        max_patterns=_env_int("GRAND_MAX_PATTERNS", 6144),
         frame_gate_threshold=_env_float("GRAND_FRAME_GATE_THRESHOLD", 0.0),
         gate_max_synd=_env_int("GRAND_GATE_MAX_SYND", 999),
         gate_max_hard_ones=_env_int("GRAND_GATE_MAX_HARD_ONES", 999),
-        ai_weight=_env_float("GRAND_AI_WEIGHT", 1.50),
+        ai_weight=_env_float("GRAND_AI_WEIGHT", 1.60),
         gain_weight=_env_float("GRAND_GAIN_WEIGHT", 0.24),
         osc_weight=_env_float("GRAND_OSC_WEIGHT", 0.18),
-        llr_weight=_env_float("GRAND_LLR_WEIGHT", 1.0),
+        llr_weight=_env_float("GRAND_LLR_WEIGHT", 1.00),
         sw_weight=_env_float("GRAND_SW_WEIGHT", 1.20),
-        info_bonus=_env_float("GRAND_INFO_BONUS", 0.70),
+        info_bonus=_env_float("GRAND_INFO_BONUS", 0.78),
         tx_bonus=_env_float("GRAND_TX_BONUS", 0.16),
-        punctured_info_bonus=_env_float("GRAND_PUNCTURED_INFO_BONUS", 0.40),
-        parity_penalty=_env_float("GRAND_PARITY_PENALTY", 0.15),
+        punctured_info_bonus=_env_float("GRAND_PUNCTURED_INFO_BONUS", 0.44),
+        parity_penalty=_env_float("GRAND_PARITY_PENALTY", 0.18),
         block_prob_weight=_env_float("GRAND_BLOCK_PROB_WEIGHT", 0.95),
         block_mass_weight=_env_float("GRAND_BLOCK_MASS_WEIGHT", 0.55),
         block_combo_max=_env_int("GRAND_BLOCK_COMBO_MAX", 3),
-        top_blocks=_env_int("GRAND_TOP_BLOCKS", 8),
-        block_beam_width=_env_int("GRAND_BLOCK_BEAM_WIDTH", 48),
-        prefix_keep=_env_int("GRAND_PREFIX_KEEP", 6),
-        block_refine_bits=_env_int("GRAND_BLOCK_REFINE_BITS", 12),
-        global_top_bits=_env_int("GRAND_GLOBAL_TOP_BITS", 20),
-        direct_top_bits=_env_int("GRAND_DIRECT_TOP_BITS", 6),
-        exact_pool_cap=_env_int("GRAND_EXACT_POOL_CAP", 56),
-        block_mask_variants=_env_int("GRAND_BLOCK_MASK_VARIANTS", 6),
+        top_blocks=_env_int("GRAND_TOP_BLOCKS", 10),
+        block_beam_width=_env_int("GRAND_BLOCK_BEAM_WIDTH", 64),
+        prefix_keep=_env_int("GRAND_PREFIX_KEEP", 8),
+        block_refine_bits=_env_int("GRAND_BLOCK_REFINE_BITS", 16),
+        global_top_bits=_env_int("GRAND_GLOBAL_TOP_BITS", 28),
+        direct_top_bits=_env_int("GRAND_DIRECT_TOP_BITS", 8),
+        exact_pool_cap=_env_int("GRAND_EXACT_POOL_CAP", 72),
+        block_mask_variants=_env_int("GRAND_BLOCK_MASK_VARIANTS", 8),
+        traj_depth=_env_int("GRAND_TRAJ_DEPTH", 5),
+        traj_try_top=_env_int("GRAND_TRAJ_TRY_TOP", 2),
+        traj_info_weight=_env_float("GRAND_TRAJ_INFO_WEIGHT", 2.20),
+        traj_punctured_weight=_env_float("GRAND_TRAJ_PUNCTURED_WEIGHT", 1.35),
+        traj_parity_weight=_env_float("GRAND_TRAJ_PARITY_WEIGHT", 0.45),
+        traj_synd_weight=_env_float("GRAND_TRAJ_SYND_WEIGHT", 0.10),
+        traj_best_scale=_env_float("GRAND_TRAJ_BEST_SCALE", 1.80),
+        traj_second_scale=_env_float("GRAND_TRAJ_SECOND_SCALE", 1.25),
     )
     base_seed = _env_int("RNG_SEED_GLOBAL", 20260404)
     return RunConfig(
@@ -2523,19 +2750,21 @@ def main():
     code_cfg = build_sionna_5g_nr_code_cfg(run_cfg.k_info, run_cfg.n_tx, run_cfg.qm)
     _warmup(code_cfg, run_cfg.stage1_iters)
 
-    bit_model_path = os.path.join(results_dir, f"bcai_bit_student_it{run_cfg.stage1_iters:02d}.npz")
-    block_model_path = os.path.join(results_dir, f"bcai_block_student_it{run_cfg.stage1_iters:02d}.npz")
-    calib_meta = run_calibration(run_cfg, code_cfg, bit_model_path, block_model_path)
+    bit_model_path = os.path.join(results_dir, f"tsbcai_bit_student_it{run_cfg.stage1_iters:02d}.npz")
+    block_model_path = os.path.join(results_dir, f"tsbcai_block_student_it{run_cfg.stage1_iters:02d}.npz")
+    snapshot_model_path = os.path.join(results_dir, f"tsbcai_snapshot_student_it{run_cfg.stage1_iters:02d}.npz")
+    calib_meta = run_calibration(run_cfg, code_cfg, bit_model_path, block_model_path, snapshot_model_path)
     bit_student = load_student(bit_model_path) if calib_meta["bit_model_ready"] else None
     block_student_obj = load_block_student(block_model_path) if calib_meta["block_model_ready"] else None
+    snapshot_student = load_gate_student(snapshot_model_path) if calib_meta.get("snapshot_model_ready", False) else None
 
     rows = []
     print(f"[RUN] code={code_cfg.code_name} it={run_cfg.stage1_iters} eval_snr={run_cfg.eval_snr_db}")
     print(f"[RUN] calib={calib_meta}")
     for snr_db in run_cfg.eval_snr_db:
-        res = evaluate_one_snr(run_cfg, code_cfg, float(snr_db), bit_student, block_student_obj)
+        res = evaluate_one_snr(run_cfg, code_cfg, float(snr_db), bit_student, block_student_obj, snapshot_student)
         rows.append(res)
-        print("\n=== BCAI HYBRID EVAL ===")
+        print("\n=== TSBCAI HYBRID EVAL ===")
         print(f"SNR (dB)                         : {res['snr_db']:.2f}")
         print(f"Frames simulated                 : {res['frames']}")
         print(f"LDPC FER / BER                   : {res['ldpc_fer']:.6e} / {res['ldpc_ber']:.6e}")
@@ -2553,6 +2782,8 @@ def main():
         print(f"Pools info/punc/txp | invoked    : {res['avg_info_pool_per_invoked']:.2f} / {res['avg_punctured_info_pool_per_invoked']:.2f} / {res['avg_tx_parity_pool_per_invoked']:.2f}")
         print(f"Block patterns / prefixes        : {res['avg_block_patterns_tested_per_invoked']:.3f} / {res['avg_prefixes_kept_per_invoked']:.3f}")
         print(f"Selected blocks / top prob       : {res['avg_selected_blocks_per_invoked']:.3f} / {res['avg_top_block_prob_per_invoked']:.3f}")
+        print(f"Snapshots tried / first it       : {res['avg_snapshots_tried_per_invoked']:.3f} / {res['avg_first_snapshot_iter_given_invoked']:.3f}")
+        print(f"Success it / first-second succ   : {res['avg_success_snapshot_iter_given_rescue']:.3f} / {res['grand_first_snapshot_success_rate_given_invoked']:.6f}-{res['grand_second_snapshot_success_rate_given_invoked']:.6f}")
         print(f"Avg candidate pool | invoked     : {res['avg_candidate_pool_per_invoked']:.3f}")
         print(f"Avg solver candidates | invoked  : {res['avg_solver_candidates_per_invoked']:.3f}")
         print(f"Avg max free dim | invoked       : {res['avg_max_free_dim_per_invoked']:.3f}")
@@ -2560,7 +2791,7 @@ def main():
         print(f"Avg GRAND decoder us             : {res['avg_grand_decoder_us']:.3f}")
         print(f"Avg total hybrid decoder us      : {res['avg_total_hybrid_decoder_us']:.3f}")
 
-    prefix = f"bcai_it{run_cfg.stage1_iters:02d}_{_now_tag()}"
+    prefix = f"tsbcai_it{run_cfg.stage1_iters:02d}_{_now_tag()}"
     summary_path = os.path.join(results_dir, f"{prefix}_summary.csv")
     raw_path = os.path.join(results_dir, f"{prefix}_raw.pkl")
     cfg_path = os.path.join(results_dir, f"{prefix}_config.json")
@@ -2601,6 +2832,7 @@ def main():
     print(f"[SAVE] config={cfg_path}")
     print(f"[SAVE] bit_model={bit_model_path if calib_meta['bit_model_ready'] else 'not-created'}")
     print(f"[SAVE] block_model={block_model_path if calib_meta['block_model_ready'] else 'not-created'}")
+    print(f"[SAVE] snapshot_model={snapshot_model_path if calib_meta.get('snapshot_model_ready', False) else 'not-created'}")
 
 
 if __name__ == "__main__":

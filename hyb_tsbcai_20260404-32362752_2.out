@@ -1,0 +1,158 @@
+{
+  "errors": {},
+  "python": "/scratch/rsadve1/venvs/grand5g/bin/python",
+  "status": {
+    "LDPC5GEncoder_ok": true,
+    "TDL_ok": true,
+    "numba_ok": true,
+    "numpy_ok": true,
+    "scipy_ok": true,
+    "sionna_ok": true
+  }
+}
+[SBATCH CONFIG] task=2 it=25 eval_snr=8.0,8.5,9.0,9.5,10.0 calib_snr=7.5,8.0,8.5,9.0
+[SBATCH CONFIG] channel=SIONNA_TDL tdl=B delay=1.0e-7 speed=[0.5,3.0] cfo=15.0 csi=nr_imperfect
+[SBATCH CONFIG] traj depth/try=5/2 pools info/punc/txp=26/18/12 blocks=10 beam=64 exact_pool=72 max_w=20 free_dim=20
+[RUN] code=sionna5g_k1024_n2048_qm1 it=25 eval_snr=[8.0, 8.5, 9.0, 9.5, 10.0]
+[RUN] calib={'calib_total_frames': 8774, 'calib_failed_frames': 640, 'calib_bit_rows': 6568153, 'calib_block_rows': 66387, 'calib_snapshot_rows': 3200, 'bit_model_ready': True, 'block_model_ready': True, 'snapshot_model_ready': True, 'bit_model_path': 'results/run_hybrid_ldpc_grand_tsbcai_20260404_it25_32362752_2/tsbcai_bit_student_it25.npz', 'block_model_path': 'results/run_hybrid_ldpc_grand_tsbcai_20260404_it25_32362752_2/tsbcai_block_student_it25.npz', 'snapshot_model_path': 'results/run_hybrid_ldpc_grand_tsbcai_20260404_it25_32362752_2/tsbcai_snapshot_student_it25.npz'}
+
+=== TSBCAI HYBRID EVAL ===
+SNR (dB)                         : 8.00
+Frames simulated                 : 1964
+LDPC FER / BER                   : 6.109980e-02 / 1.358237e-02
+Hybrid FER / BER                 : 6.109980e-02 / 1.358237e-02
+Avg stage-1 iters/frame          : 5.712
+Failed frame rate                : 0.061100
+Fallback invoked | failed        : 1.000000
+Avg invoke score | failed        : 1.000000
+GRAND invocation rate            : 0.061100
+GRAND rescue rate | invoked      : 0.000000
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.000000
+Info / parity round success      : 0.000000 / 0.000000
+Direct / prefix / global success : 0.000000 / 0.000000 / 0.000000
+Pools info/punc/txp | invoked    : 31.69 / 78.47 / 0.57
+Block patterns / prefixes        : 144.033 / 16.000
+Selected blocks / top prob       : 0.000 / 1.984
+Snapshots tried / first it       : 2.000 / 21.142
+Success it / first-second succ   : 0.000 / 0.000000-0.000000
+Avg candidate pool | invoked     : 1263.683
+Avg solver candidates | invoked  : 146.033
+Avg max free dim | invoked       : 0.000
+Avg stage-1 decoder us           : 10239.145
+Avg GRAND decoder us             : 116632.637
+Avg total hybrid decoder us      : 126871.781
+
+=== TSBCAI HYBRID EVAL ===
+SNR (dB)                         : 8.50
+Frames simulated                 : 3336
+LDPC FER / BER                   : 3.687050e-02 / 7.482295e-03
+Hybrid FER / BER                 : 3.597122e-02 / 7.482295e-03
+Avg stage-1 iters/frame          : 5.072
+Failed frame rate                : 0.036871
+Fallback invoked | failed        : 1.000000
+Avg invoke score | failed        : 1.000000
+GRAND invocation rate            : 0.036871
+GRAND rescue rate | invoked      : 0.024390
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.024390
+Info / parity round success      : 0.000000 / 0.008130
+Direct / prefix / global success : 0.000000 / 0.024390 / 0.000000
+Pools info/punc/txp | invoked    : 32.95 / 75.53 / 1.51
+Block patterns / prefixes        : 143.585 / 15.870
+Selected blocks / top prob       : 0.057 / 1.955
+Snapshots tried / first it       : 1.984 / 21.276
+Success it / first-second succ   : 25.000 / 0.016260-0.008130
+Avg candidate pool | invoked     : 1239.829
+Avg solver candidates | invoked  : 145.569
+Avg max free dim | invoked       : 0.000
+Avg stage-1 decoder us           : 6890.773
+Avg GRAND decoder us             : 68051.294
+Avg total hybrid decoder us      : 74942.067
+
+=== TSBCAI HYBRID EVAL ===
+SNR (dB)                         : 9.00
+Frames simulated                 : 3664
+LDPC FER / BER                   : 3.302402e-02 / 6.939884e-03
+Hybrid FER / BER                 : 3.275109e-02 / 6.939884e-03
+Avg stage-1 iters/frame          : 4.849
+Failed frame rate                : 0.033024
+Fallback invoked | failed        : 1.000000
+Avg invoke score | failed        : 1.000000
+GRAND invocation rate            : 0.033024
+GRAND rescue rate | invoked      : 0.008264
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.008264
+Info / parity round success      : 0.000000 / 0.008264
+Direct / prefix / global success : 0.000000 / 0.008264 / 0.000000
+Pools info/punc/txp | invoked    : 32.66 / 75.74 / 1.43
+Block patterns / prefixes        : 143.620 / 15.934
+Selected blocks / top prob       : 0.025 / 1.975
+Snapshots tried / first it       : 1.992 / 21.149
+Success it / first-second succ   : 24.000 / 0.008264-0.000000
+Avg candidate pool | invoked     : 1253.868
+Avg solver candidates | invoked  : 145.612
+Avg max free dim | invoked       : 0.000
+Avg stage-1 decoder us           : 4192.414
+Avg GRAND decoder us             : 55423.809
+Avg total hybrid decoder us      : 59616.223
+
+=== TSBCAI HYBRID EVAL ===
+SNR (dB)                         : 9.50
+Frames simulated                 : 5998
+LDPC FER / BER                   : 2.017339e-02 / 4.066948e-03
+Hybrid FER / BER                 : 2.000667e-02 / 4.066948e-03
+Avg stage-1 iters/frame          : 4.390
+Failed frame rate                : 0.020173
+Fallback invoked | failed        : 1.000000
+Avg invoke score | failed        : 1.000000
+GRAND invocation rate            : 0.020173
+GRAND rescue rate | invoked      : 0.008264
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.008264
+Info / parity round success      : 0.000000 / 0.008264
+Direct / prefix / global success : 0.000000 / 0.008264 / 0.000000
+Pools info/punc/txp | invoked    : 35.10 / 73.66 / 1.42
+Block patterns / prefixes        : 144.364 / 15.934
+Selected blocks / top prob       : 0.025 / 1.974
+Snapshots tried / first it       : 1.992 / 21.207
+Success it / first-second succ   : 25.000 / 0.008264-0.000000
+Avg candidate pool | invoked     : 1253.826
+Avg solver candidates | invoked  : 146.355
+Avg max free dim | invoked       : 0.000
+Avg stage-1 decoder us           : 4169.894
+Avg GRAND decoder us             : 35150.926
+Avg total hybrid decoder us      : 39320.820
+
+=== TSBCAI HYBRID EVAL ===
+SNR (dB)                         : 10.00
+Frames simulated                 : 5705
+LDPC FER / BER                   : 2.120947e-02 / 4.102761e-03
+Hybrid FER / BER                 : 2.103418e-02 / 4.102761e-03
+Avg stage-1 iters/frame          : 4.273
+Failed frame rate                : 0.021209
+Fallback invoked | failed        : 1.000000
+Avg invoke score | failed        : 1.000000
+GRAND invocation rate            : 0.021209
+GRAND rescue rate | invoked      : 0.008264
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.008264
+Info / parity round success      : 0.000000 / 0.008264
+Direct / prefix / global success : 0.000000 / 0.008264 / 0.000000
+Pools info/punc/txp | invoked    : 34.08 / 70.92 / 2.44
+Block patterns / prefixes        : 144.397 / 15.934
+Selected blocks / top prob       : 0.025 / 1.973
+Snapshots tried / first it       : 1.992 / 21.430
+Success it / first-second succ   : 25.000 / 0.008264-0.000000
+Avg candidate pool | invoked     : 1254.355
+Avg solver candidates | invoked  : 146.388
+Avg max free dim | invoked       : 0.000
+Avg stage-1 decoder us           : 3823.393
+Avg GRAND decoder us             : 35366.677
+Avg total hybrid decoder us      : 39190.069
+[SAVE] summary=results/run_hybrid_ldpc_grand_tsbcai_20260404_it25_32362752_2/tsbcai_it25_20260405-013422_summary.csv
+[SAVE] raw=results/run_hybrid_ldpc_grand_tsbcai_20260404_it25_32362752_2/tsbcai_it25_20260405-013422_raw.pkl
+[SAVE] config=results/run_hybrid_ldpc_grand_tsbcai_20260404_it25_32362752_2/tsbcai_it25_20260405-013422_config.json
+[SAVE] bit_model=results/run_hybrid_ldpc_grand_tsbcai_20260404_it25_32362752_2/tsbcai_bit_student_it25.npz
+[SAVE] block_model=results/run_hybrid_ldpc_grand_tsbcai_20260404_it25_32362752_2/tsbcai_block_student_it25.npz
+[SAVE] snapshot_model=results/run_hybrid_ldpc_grand_tsbcai_20260404_it25_32362752_2/tsbcai_snapshot_student_it25.npz
