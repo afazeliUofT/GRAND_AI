@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/scratch/rsadve1/GRAND_AI/hybrid_ldpc_grand_aipog_20260406.py", line 2948, in <module>
+    main()
+  File "/scratch/rsadve1/GRAND_AI/hybrid_ldpc_grand_aipog_20260406.py", line 2853, in main
+    raise RuntimeError(
+RuntimeError: Sionna LDPC/TDL support is required. Import detail: LDPC5GEncoder import failed: sionna.phy.fec.ldpc.LDPC5GEncoder: ModuleNotFoundError("No module named 'sionna'") | sionna.phy.fec.ldpc.encoding.LDPC5GEncoder: ModuleNotFoundError("No module named 'sionna'") | sionna.fec.ldpc.LDPC5GEncoder: ModuleNotFoundError("No module named 'sionna'") | sionna.fec.ldpc.encoding.LDPC5GEncoder: ModuleNotFoundError("No module named 'sionna'") ; TDL import failed: sionna.phy.channel.tr38901.TDL: ModuleNotFoundError("No module named 'sionna'") | sionna.phy.channel.tr38901.tdl.TDL: ModuleNotFoundError("No module named 'sionna'") | sionna.channel.tr38901.TDL: ModuleNotFoundError("No module named 'sionna'") | sionna.channel.tr38901.tdl.TDL: ModuleNotFoundError("No module named 'sionna'")
