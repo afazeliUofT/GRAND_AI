@@ -7,16 +7,25 @@ import time
 import pickle
 import datetime
 import itertools
+import heapq
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional, Any
 
 import numpy as np
 
 # ------------------------- Optional acceleration -------------------------
-try:
-    from numba import njit, prange, set_num_threads, get_num_threads
-    NUMBA_AVAILABLE = True
-except Exception:
+_DISABLE_NUMBA = os.getenv("LDPC_GRAND_DISABLE_NUMBA", "0").strip().lower() in ("1", "true", "yes")
+if not _DISABLE_NUMBA:
+    try:
+        from numba import njit, prange, set_num_threads, get_num_threads
+        NUMBA_AVAILABLE = True
+    except Exception:
+        njit = None
+        prange = range
+        set_num_threads = None
+        get_num_threads = None
+        NUMBA_AVAILABLE = False
+else:
     njit = None
     prange = range
     set_num_threads = None
@@ -687,7 +696,7 @@ def prepare_code_for_fast_decoding(code_cfg: CodeConfig) -> None:
 
 
 if NUMBA_AVAILABLE:
-    @njit(parallel=True, cache=True)
+    @njit(parallel=True, cache=False)
     def _compute_syndrome_numba(bits, check_ptrs, check_indices, M):
         s = np.zeros(M, dtype=np.uint8)
         for j in prange(M):
@@ -699,7 +708,7 @@ if NUMBA_AVAILABLE:
             s[j] = parity
         return s
 
-    @njit(parallel=True, cache=True)
+    @njit(parallel=True, cache=False)
     def _check_node_update_numba(msg_v2c_flat, msg_c2v_flat, c2v_ptrs, M, alpha):
         for j in prange(M):
             start = c2v_ptrs[j]
@@ -732,7 +741,7 @@ if NUMBA_AVAILABLE:
                 mag_e = min2 if e == idx_min1 else min1
                 msg_c2v_flat[start + e] = alpha * sign_e * mag_e
 
-    @njit(parallel=True, cache=True)
+    @njit(parallel=True, cache=False)
     def _variable_node_update_numba(llr_channel, msg_c2v_flat, v2c_ptrs, v2c_checks, v2c_edge_pos, c2v_ptrs, N):
         llr_posterior = np.empty_like(llr_channel)
         for v in prange(N):
@@ -746,7 +755,7 @@ if NUMBA_AVAILABLE:
             llr_posterior[v] = llr_channel[v] + total
         return llr_posterior
 
-    @njit(parallel=True, cache=True)
+    @njit(parallel=True, cache=False)
     def _vn_to_cn_update_numba(llr_posterior, msg_c2v_flat, msg_v2c_flat, v2c_ptrs, v2c_checks, v2c_edge_pos, c2v_ptrs, N):
         for v in prange(N):
             start = v2c_ptrs[v]
@@ -757,6 +766,73 @@ if NUMBA_AVAILABLE:
                 e = v2c_edge_pos[idx]
                 base = c2v_ptrs[j] + e
                 msg_v2c_flat[base] = L_v - msg_c2v_flat[base]
+else:
+    def _compute_syndrome_numba(bits, check_ptrs, check_indices, M):
+        s = np.zeros(int(M), dtype=np.uint8)
+        for j in range(int(M)):
+            start = int(check_ptrs[j])
+            end = int(check_ptrs[j + 1])
+            parity = 0
+            for idx in range(start, end):
+                parity ^= int(bits[int(check_indices[idx])])
+            s[j] = parity
+        return s
+
+    def _check_node_update_numba(msg_v2c_flat, msg_c2v_flat, c2v_ptrs, M, alpha):
+        for j in range(int(M)):
+            start = int(c2v_ptrs[j])
+            end = int(c2v_ptrs[j + 1])
+            d = end - start
+            if d <= 0:
+                continue
+            sign_all = 1.0
+            min1 = 1e30
+            min2 = 1e30
+            idx_min1 = 0
+            for e in range(d):
+                msg = float(msg_v2c_flat[start + e])
+                if msg < 0.0:
+                    sign_all *= -1.0
+                    abs_val = -msg
+                else:
+                    abs_val = msg if msg > 0.0 else 0.0
+                if abs_val < min1:
+                    min2 = min1
+                    min1 = abs_val
+                    idx_min1 = e
+                elif abs_val < min2:
+                    min2 = abs_val
+            if d == 1:
+                min2 = min1
+            for e in range(d):
+                msg = float(msg_v2c_flat[start + e])
+                sign_e = -sign_all if msg < 0.0 else sign_all
+                mag_e = min2 if e == idx_min1 else min1
+                msg_c2v_flat[start + e] = float(alpha) * sign_e * mag_e
+
+    def _variable_node_update_numba(llr_channel, msg_c2v_flat, v2c_ptrs, v2c_checks, v2c_edge_pos, c2v_ptrs, N):
+        llr_posterior = np.empty_like(llr_channel)
+        for v in range(int(N)):
+            start = int(v2c_ptrs[v])
+            end = int(v2c_ptrs[v + 1])
+            total = 0.0
+            for idx in range(start, end):
+                j = int(v2c_checks[idx])
+                e = int(v2c_edge_pos[idx])
+                total += float(msg_c2v_flat[int(c2v_ptrs[j]) + e])
+            llr_posterior[v] = float(llr_channel[v]) + total
+        return llr_posterior
+
+    def _vn_to_cn_update_numba(llr_posterior, msg_c2v_flat, msg_v2c_flat, v2c_ptrs, v2c_checks, v2c_edge_pos, c2v_ptrs, N):
+        for v in range(int(N)):
+            start = int(v2c_ptrs[v])
+            end = int(v2c_ptrs[v + 1])
+            L_v = float(llr_posterior[v])
+            for idx in range(start, end):
+                j = int(v2c_checks[idx])
+                e = int(v2c_edge_pos[idx])
+                base = int(c2v_ptrs[j]) + e
+                msg_v2c_flat[base] = L_v - float(msg_c2v_flat[base])
 
 
 def compute_syndrome(bits: np.ndarray, code_cfg: CodeConfig) -> np.ndarray:
@@ -976,7 +1052,7 @@ class DistilledLinearStudent:
 
     @staticmethod
     def load(path: str):
-        payload = np.load(path, allow_pickle=True)
+        payload = np.load(path, allow_pickle=False)
         obj = DistilledLinearStudent(int(payload["w"].shape[0]))
         obj.w = payload["w"].astype(np.float32)
         obj.b = float(payload["b"][0])
@@ -1309,7 +1385,7 @@ def save_student(path: str, student: DistilledLinearStudent):
         b=np.array([student.b], dtype=np.float32),
         mu=student.norm_mu.astype(np.float32),
         sigma=student.norm_sigma.astype(np.float32),
-        feature_names=np.array(FEATURE_NAMES, dtype=object),
+        feature_names=np.asarray(FEATURE_NAMES, dtype=np.str_),
     )
 
 
@@ -1442,12 +1518,12 @@ def save_block_student(path: str, student: DistilledLinearStudent):
         b=np.array([student.b], dtype=np.float32),
         mu=student.norm_mu.astype(np.float32),
         sigma=student.norm_sigma.astype(np.float32),
-        feature_names=np.array(BLOCK_FEATURE_NAMES, dtype=object),
+        feature_names=np.asarray(BLOCK_FEATURE_NAMES, dtype=np.str_),
     )
 
 
 def load_block_student(path: str) -> DistilledLinearStudent:
-    payload = np.load(path, allow_pickle=True)
+    payload = np.load(path, allow_pickle=False)
     student = DistilledLinearStudent(int(payload["w"].shape[0]))
     student.w = payload["w"].astype(np.float32)
     student.b = float(payload["b"][0])
@@ -2105,7 +2181,6 @@ def _solve_exact_on_pool(
 
 
 # ------------------------- AI Posterior-Ordered GRAND -------------------------
-import heapq
 
 def _default_pattern_stats(code_cfg: CodeConfig, cfg: HybridConfig) -> Dict[str, Any]:
     size_choices = np.asarray(sorted(set(int(x) for x in cfg.block_prefix_sizes if int(x) > 0)), dtype=np.int32)
@@ -2137,7 +2212,7 @@ def save_pattern_stats(path: str, stats: Dict[str, Any]) -> None:
 
 
 def load_pattern_stats(path: str) -> Dict[str, Any]:
-    payload = np.load(path, allow_pickle=True)
+    payload = np.load(path, allow_pickle=False)
     out = {
         "size_choices": payload["size_choices"].astype(np.int32),
         "size_prior": payload["size_prior"].astype(np.float32),
@@ -2159,6 +2234,15 @@ def _prob_clip_bounds() -> Tuple[float, float]:
     if pmax <= pmin:
         pmax = min(0.49, pmin + 0.10)
     return float(pmin), float(pmax)
+
+
+def _nearest_anchor_idx(val: int, anchors: np.ndarray) -> int:
+    arr = np.asarray(anchors, dtype=np.int32).reshape(-1)
+    if arr.size == 0:
+        return 0
+    v = int(val)
+    diffs = np.abs(arr.astype(np.int64) - np.int64(v))
+    return int(np.argmin(diffs))
 
 
 def _safe_logit_prob(p: np.ndarray) -> np.ndarray:
@@ -2310,6 +2394,14 @@ def _syndrome_array_to_int(syndrome_bits: np.ndarray) -> int:
     return int(out)
 
 
+def _popcount_int(x: int) -> int:
+    x = int(x)
+    try:
+        return int(x.bit_count())
+    except AttributeError:
+        return int(bin(x).count("1"))
+
+
 def _ensure_bit_check_mask_int(code_cfg: CodeConfig) -> None:
     if hasattr(code_cfg, "_bit_check_mask_int"):
         return
@@ -2395,7 +2487,7 @@ def ordered_pattern_grand(
     heap: List[Tuple[float, int, int, Tuple[int, ...], int]] = []
     root_support = (0,)
     root_synd = int(base_synd ^ col_masks[0])
-    heapq.heappush(heap, (float(cost_sorted[0]), int(root_synd.bit_count()), 1, root_support, root_synd))
+    heapq.heappush(heap, (float(cost_sorted[0]), _popcount_int(root_synd), 1, root_support, root_synd))
     queue_max = 1
     patterns_tested = 0
     zero_synd_candidates = 0
@@ -2437,14 +2529,14 @@ def ordered_pattern_grand(
             child_a = support[:-1] + (nxt,)
             cost_a = float(cost - float(cost_sorted[last]) + float(cost_sorted[nxt]))
             synd_a = int(synd_mask ^ col_masks[last] ^ col_masks[nxt])
-            heapq.heappush(heap, (cost_a, int(synd_a.bit_count()), len(child_a), child_a, synd_a))
+            heapq.heappush(heap, (cost_a, _popcount_int(synd_a), len(child_a), child_a, synd_a))
 
         # Child B: append the next candidate
         if len(support) < max_support:
             child_b = support + (nxt,)
             cost_b = float(cost + float(cost_sorted[nxt]))
             synd_b = int(synd_mask ^ col_masks[nxt])
-            heapq.heappush(heap, (cost_b, int(synd_b.bit_count()), len(child_b), child_b, synd_b))
+            heapq.heappush(heap, (cost_b, _popcount_int(synd_b), len(child_b), child_b, synd_b))
 
         if len(heap) > queue_max:
             queue_max = len(heap)
@@ -2856,6 +2948,9 @@ def main():
         )
 
     run_cfg = build_run_config(results_dir)
+    print(f"[RUNTIME] python={sys.executable}")
+    print(f"[RUNTIME] numba_available={NUMBA_AVAILABLE} numba_threads={NUMBA_THREADS} disable_numba={_DISABLE_NUMBA}")
+    print(f"[RUNTIME] results_dir={results_dir}")
     code_cfg = build_sionna_5g_nr_code_cfg(run_cfg.k_info, run_cfg.n_tx, run_cfg.qm)
     _warmup(code_cfg, run_cfg.stage1_iters)
 
@@ -2864,9 +2959,21 @@ def main():
     pattern_stats_path = os.path.join(results_dir, f"aipog_pattern_stats_it{run_cfg.stage1_iters:02d}.npz")
 
     calib_meta = run_calibration(run_cfg, code_cfg, bit_model_path, block_model_path, pattern_stats_path)
-    bit_student = load_student(bit_model_path) if calib_meta["bit_model_ready"] else None
-    block_student_obj = load_block_student(block_model_path) if calib_meta["block_model_ready"] else None
-    pattern_stats = load_pattern_stats(pattern_stats_path) if os.path.exists(pattern_stats_path) else _default_pattern_stats(code_cfg, run_cfg.hybrid)
+    try:
+        bit_student = load_student(bit_model_path) if calib_meta["bit_model_ready"] and os.path.exists(bit_model_path) else None
+    except Exception as e:
+        print(f"[WARN] failed to load bit student: {e!r}")
+        bit_student = None
+    try:
+        block_student_obj = load_block_student(block_model_path) if calib_meta["block_model_ready"] and os.path.exists(block_model_path) else None
+    except Exception as e:
+        print(f"[WARN] failed to load block student: {e!r}")
+        block_student_obj = None
+    try:
+        pattern_stats = load_pattern_stats(pattern_stats_path) if os.path.exists(pattern_stats_path) else _default_pattern_stats(code_cfg, run_cfg.hybrid)
+    except Exception as e:
+        print(f"[WARN] failed to load pattern stats: {e!r}")
+        pattern_stats = _default_pattern_stats(code_cfg, run_cfg.hybrid)
 
     rows: List[Dict[str, Any]] = []
     print(f"[RUN] code={code_cfg.code_name} it={run_cfg.stage1_iters} eval_snr={run_cfg.eval_snr_db}")
