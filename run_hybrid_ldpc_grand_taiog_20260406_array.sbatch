@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=hyb_aipogfix_20260406
+#SBATCH --job-name=hyb_taiog_20260406
 #SBATCH --account=def-rsadve
 #SBATCH --time=16:00:00
 #SBATCH --cpus-per-task=32
@@ -99,7 +99,7 @@ export NUMEXPR_NUM_THREADS=1
 export LDPC_GRAND_DISABLE_NUMBA=0
 
 # Same realistic 5G receiver chain for legacy LDPC and hybrid.
-# New fallback: AIPOG = AI posterior-ordered GRAND over whole patterns with a 200K cap.
+# New fallback: TAIOG = true AI posterior-ordered GRAND over whole patterns with a 200K cap.
 export CHANNEL_NAME=SIONNA_TDL
 export SIONNA_5G_K=1024
 export SIONNA_5G_N=2048
@@ -174,12 +174,12 @@ case "${SLURM_ARRAY_TASK_ID}" in
     ;;
 esac
 
-RESULTS_DIR="results/run_hybrid_ldpc_grand_aipogfix_20260406_${ITER_TAG}_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+RESULTS_DIR="results/run_hybrid_ldpc_grand_taiog_20260406_${ITER_TAG}_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 mkdir -p "$RESULTS_DIR"
 
 printf '[SBATCH CONFIG] task=%s it=%s eval_snr=%s calib_snr=%s\n' "$SLURM_ARRAY_TASK_ID" "$STAGE1_ITERS" "$EVAL_SNR_SWEEP" "$CALIB_SNR_SWEEP"
 printf '[SBATCH CONFIG] channel=%s tdl=%s delay=%s speed=[%s,%s] cfo=%s csi=%s\n' "$CHANNEL_NAME" "$SIONNA_TDL_MODEL" "$SIONNA_TDL_DELAY_SPREAD_S" "$SIONNA_TDL_MIN_SPEED" "$SIONNA_TDL_MAX_SPEED" "$SIONNA_CFO_HZ" "$SIONNA_CSI_MODE"
 printf '[SBATCH CONFIG] aipogfix single_pool=%s tx_info=%s punct=%s tx_parity=%s max_patterns=%s max_support=%s\n' "$GRAND_SINGLE_POOL" "$GRAND_TX_INFO_POOL" "$GRAND_PUNCTURED_INFO_POOL" "$GRAND_TX_PARITY_POOL" "$GRAND_MAX_PATTERNS" "$GRAND_MAX_SUPPORT_BITS"
 
-python -u hybrid_ldpc_grand_aipogfix_20260406.py "$RESULTS_DIR" \
+python -u hybrid_ldpc_grand_taiog_20260406.py "$RESULTS_DIR" \
   2> >(grep -vE 'oneDNN custom operations are on|Unable to register cuFFT factory|All log messages before absl::InitializeLog|Unable to register cuDNN factory|Unable to register cuBLAS factory|computation placer already registered' >&2)

@@ -26,15 +26,15 @@
     8.0
   ],
   "calibration": {
-    "bit_model_path": "results/run_hybrid_ldpc_grand_aipogfix_20260406_it08_32851148_0/aipog_bit_student_it08.npz",
+    "bit_model_path": "results/run_hybrid_ldpc_grand_taiog_20260406_it08_32865478_0/aipog_bit_student_it08.npz",
     "bit_model_ready": true,
-    "block_model_path": "results/run_hybrid_ldpc_grand_aipogfix_20260406_it08_32851148_0/aipog_block_student_it08.npz",
+    "block_model_path": "results/run_hybrid_ldpc_grand_taiog_20260406_it08_32865478_0/aipog_block_student_it08.npz",
     "block_model_ready": true,
     "calib_bit_rows": 2716350,
     "calib_block_rows": 35711,
     "calib_failed_frames": 700,
     "calib_total_frames": 3063,
-    "pattern_stats_path": "results/run_hybrid_ldpc_grand_aipogfix_20260406_it08_32851148_0/aipog_pattern_stats_it08.npz",
+    "pattern_stats_path": "results/run_hybrid_ldpc_grand_taiog_20260406_it08_32865478_0/aipog_pattern_stats_it08.npz",
     "size_choices": [
       2,
       4,

@@ -20,21 +20,21 @@
     "temperature": 2.5
   },
   "calib_snr_db": [
-    6.75,
-    7.25,
-    7.75,
-    8.25
+    7.0,
+    7.5,
+    8.0,
+    8.5
   ],
   "calibration": {
-    "bit_model_path": "results/run_hybrid_ldpc_grand_aipogfix_20260406_it15_32851148_1/aipog_bit_student_it15.npz",
+    "bit_model_path": "results/run_hybrid_ldpc_grand_taiog_20260406_it25_32865478_2/aipog_bit_student_it25.npz",
     "bit_model_ready": true,
-    "block_model_path": "results/run_hybrid_ldpc_grand_aipogfix_20260406_it15_32851148_1/aipog_block_student_it15.npz",
+    "block_model_path": "results/run_hybrid_ldpc_grand_taiog_20260406_it25_32865478_2/aipog_block_student_it25.npz",
     "block_model_ready": true,
-    "calib_bit_rows": 3354868,
-    "calib_block_rows": 36126,
+    "calib_bit_rows": 3601605,
+    "calib_block_rows": 36231,
     "calib_failed_frames": 700,
-    "calib_total_frames": 5785,
-    "pattern_stats_path": "results/run_hybrid_ldpc_grand_aipogfix_20260406_it15_32851148_1/aipog_pattern_stats_it15.npz",
+    "calib_total_frames": 7563,
+    "pattern_stats_path": "results/run_hybrid_ldpc_grand_taiog_20260406_it25_32865478_2/aipog_pattern_stats_it25.npz",
     "size_choices": [
       2,
       4,
@@ -56,11 +56,11 @@
   },
   "code": "sionna5g_k1024_n2048_qm1",
   "eval_snr_db": [
-    7.0,
     7.5,
     8.0,
     8.5,
-    9.0
+    9.0,
+    9.5
   ],
   "hybrid": {
     "ai_weight": 1.6,
@@ -140,5 +140,5 @@
   },
   "n_tx": 2048,
   "qm": 1,
-  "stage1_iters": 15
+  "stage1_iters": 25
 }

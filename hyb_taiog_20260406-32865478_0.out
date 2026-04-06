@@ -15,9 +15,9 @@
 [SBATCH CONFIG] aipogfix single_pool=96 tx_info=56 punct=24 tx_parity=16 max_patterns=200000 max_support=160
 [RUNTIME] python=/scratch/rsadve1/venvs/grand5g/bin/python
 [RUNTIME] numba_available=True numba_threads=32 disable_numba=False
-[RUNTIME] results_dir=results/run_hybrid_ldpc_grand_aipogfix_20260406_it08_32851148_0
+[RUNTIME] results_dir=results/run_hybrid_ldpc_grand_taiog_20260406_it08_32865478_0
 [RUN] code=sionna5g_k1024_n2048_qm1 it=8 eval_snr=[7.0, 7.5, 8.0, 8.5, 9.0]
-[RUN] calib={'calib_total_frames': 3063, 'calib_failed_frames': 700, 'calib_bit_rows': 2716350, 'calib_block_rows': 35711, 'bit_model_ready': True, 'block_model_ready': True, 'bit_model_path': 'results/run_hybrid_ldpc_grand_aipogfix_20260406_it08_32851148_0/aipog_bit_student_it08.npz', 'block_model_path': 'results/run_hybrid_ldpc_grand_aipogfix_20260406_it08_32851148_0/aipog_block_student_it08.npz', 'pattern_stats_path': 'results/run_hybrid_ldpc_grand_aipogfix_20260406_it08_32851148_0/aipog_pattern_stats_it08.npz', 'size_choices': [2, 4, 8, 12, 16, 24, 32]}
+[RUN] calib={'calib_total_frames': 3063, 'calib_failed_frames': 700, 'calib_bit_rows': 2716350, 'calib_block_rows': 35711, 'bit_model_ready': True, 'block_model_ready': True, 'bit_model_path': 'results/run_hybrid_ldpc_grand_taiog_20260406_it08_32865478_0/aipog_bit_student_it08.npz', 'block_model_path': 'results/run_hybrid_ldpc_grand_taiog_20260406_it08_32865478_0/aipog_block_student_it08.npz', 'pattern_stats_path': 'results/run_hybrid_ldpc_grand_taiog_20260406_it08_32865478_0/aipog_pattern_stats_it08.npz', 'size_choices': [2, 4, 8, 12, 16, 24, 32]}
 [RUN] aipog max_patterns=200000 pool=96 tx_info_pool=56 punct_pool=24 tx_par_pool=16
 
 === AIPOG HYBRID EVAL ===
@@ -39,9 +39,9 @@ Avg queue max | invoked          : 198510.560
 Avg zero-synd candidates | inv   : 0.000
 Success pattern weight           : 0.000
 Success first-cost               : 0.000
-Avg stage-1 decoder us           : 71266.317
-Avg GRAND decoder us             : 476955.800
-Avg total hybrid decoder us      : 148070.793
+Avg stage-1 decoder us           : 46137.299
+Avg GRAND decoder us             : 482983.612
+Avg total hybrid decoder us      : 123912.438
 
 === AIPOG HYBRID EVAL ===
 SNR (dB)                         : 7.50
@@ -62,9 +62,9 @@ Avg queue max | invoked          : 189069.876
 Avg zero-synd candidates | inv   : 0.048
 Success pattern weight           : 1.000
 Success first-cost               : 0.040
-Avg stage-1 decoder us           : 73546.247
-Avg GRAND decoder us             : 456755.085
-Avg total hybrid decoder us      : 136567.645
+Avg stage-1 decoder us           : 37348.395
+Avg GRAND decoder us             : 459979.937
+Avg total hybrid decoder us      : 100814.747
 
 === AIPOG HYBRID EVAL ===
 SNR (dB)                         : 8.00
@@ -85,9 +85,9 @@ Avg queue max | invoked          : 196964.802
 Avg zero-synd candidates | inv   : 0.010
 Success pattern weight           : 1.000
 Success first-cost               : 0.040
-Avg stage-1 decoder us           : 57435.206
-Avg GRAND decoder us             : 480499.170
-Avg total hybrid decoder us      : 110765.334
+Avg stage-1 decoder us           : 42010.160
+Avg GRAND decoder us             : 491789.349
+Avg total hybrid decoder us      : 96593.374
 
 === AIPOG HYBRID EVAL ===
 SNR (dB)                         : 8.50
@@ -108,9 +108,9 @@ Avg queue max | invoked          : 195656.614
 Avg zero-synd candidates | inv   : 0.010
 Success pattern weight           : 2.000
 Success first-cost               : 0.080
-Avg stage-1 decoder us           : 50364.415
-Avg GRAND decoder us             : 461523.878
-Avg total hybrid decoder us      : 99072.787
+Avg stage-1 decoder us           : 38877.215
+Avg GRAND decoder us             : 474236.665
+Avg total hybrid decoder us      : 88927.271
 
 === AIPOG HYBRID EVAL ===
 SNR (dB)                         : 9.00
@@ -131,12 +131,12 @@ Avg queue max | invoked          : 192740.010
 Avg zero-synd candidates | inv   : 0.029
 Success pattern weight           : 1.333
 Success first-cost               : 0.053
-Avg stage-1 decoder us           : 40738.580
-Avg GRAND decoder us             : 452950.288
-Avg total hybrid decoder us      : 79910.603
-[SAVE] summary=results/run_hybrid_ldpc_grand_aipogfix_20260406_it08_32851148_0/aipog_it08_20260406-025654_summary.csv
-[SAVE] raw=results/run_hybrid_ldpc_grand_aipogfix_20260406_it08_32851148_0/aipog_it08_20260406-025654_raw.pkl
-[SAVE] config=results/run_hybrid_ldpc_grand_aipogfix_20260406_it08_32851148_0/aipog_it08_20260406-025654_config.json
-[SAVE] bit_model=results/run_hybrid_ldpc_grand_aipogfix_20260406_it08_32851148_0/aipog_bit_student_it08.npz
-[SAVE] block_model=results/run_hybrid_ldpc_grand_aipogfix_20260406_it08_32851148_0/aipog_block_student_it08.npz
-[SAVE] pattern_stats=results/run_hybrid_ldpc_grand_aipogfix_20260406_it08_32851148_0/aipog_pattern_stats_it08.npz
+Avg stage-1 decoder us           : 33227.696
+Avg GRAND decoder us             : 472251.768
+Avg total hybrid decoder us      : 74068.949
+[SAVE] summary=results/run_hybrid_ldpc_grand_taiog_20260406_it08_32865478_0/aipog_it08_20260406-042612_summary.csv
+[SAVE] raw=results/run_hybrid_ldpc_grand_taiog_20260406_it08_32865478_0/aipog_it08_20260406-042612_raw.pkl
+[SAVE] config=results/run_hybrid_ldpc_grand_taiog_20260406_it08_32865478_0/aipog_it08_20260406-042612_config.json
+[SAVE] bit_model=results/run_hybrid_ldpc_grand_taiog_20260406_it08_32865478_0/aipog_bit_student_it08.npz
+[SAVE] block_model=results/run_hybrid_ldpc_grand_taiog_20260406_it08_32865478_0/aipog_block_student_it08.npz
+[SAVE] pattern_stats=results/run_hybrid_ldpc_grand_taiog_20260406_it08_32865478_0/aipog_pattern_stats_it08.npz

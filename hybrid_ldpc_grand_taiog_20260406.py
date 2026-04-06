@@ -2728,6 +2728,7 @@ def evaluate_one_snr(
     predicted_error_mass_total = 0.0
     success_cost_total = 0.0
     block_score_peak_total = 0.0
+    cap_hits_total = 0
 
     while frames < int(run_cfg.mc.max_frames):
         seed = _stable_seed(run_cfg.base_seed, "eval", run_cfg.stage1_iters, snr_db, frames)
@@ -2757,6 +2758,8 @@ def evaluate_one_snr(
             zero_synd_candidates_total += int(res.get("zero_synd_candidates", 0))
             predicted_error_mass_total += float(res.get("predicted_error_mass", 0.0))
             block_score_peak_total += float(res.get("block_score_peak", 0.0))
+            if int(res.get("patterns_tested", 0)) >= int(run_cfg.hybrid.max_patterns):
+                cap_hits_total += 1
             if res.get("success", False):
                 final_bits = res["bits"]
                 grand_rescues += 1
@@ -2804,6 +2807,7 @@ def evaluate_one_snr(
         "avg_success_pattern_weight_given_rescue": float(success_weight_total / grand_rescues) if grand_rescues > 0 else 0.0,
         "avg_success_atom_count_given_rescue": float(success_atom_count_total / grand_rescues) if grand_rescues > 0 else 0.0,
         "avg_first_success_cost_given_rescue": float(success_cost_total / grand_rescues) if grand_rescues > 0 else 0.0,
+        "grand_cap_hit_rate_given_invoked": float(cap_hits_total / grand_invocations) if grand_invocations > 0 else 0.0,
         "avg_stage1_decoder_us": float(stage1_time * 1e6 / frames) if frames > 0 else 0.0,
         "avg_grand_decoder_us": float(grand_time * 1e6 / grand_invocations) if grand_invocations > 0 else 0.0,
         "avg_total_hybrid_decoder_us": float((stage1_time + grand_time) * 1e6 / frames) if frames > 0 else 0.0,
