@@ -1,0 +1,148 @@
+{
+  "errors": {},
+  "python": "/scratch/rsadve1/venvs/grand5g/bin/python",
+  "status": {
+    "LDPC5GEncoder_ok": true,
+    "TDL_ok": true,
+    "numba_ok": true,
+    "numpy_ok": true,
+    "scipy_ok": true,
+    "sionna_ok": true
+  }
+}
+[SBATCH CONFIG] task=0 it=8 eval_snr=6.0,6.5,7.0,7.5,8.0 calib_snr=5.5,6.0,6.5,7.0
+[SBATCH CONFIG] channel=SIONNA_TDL tdl=B delay=6.0e-8 speed=[0.1,0.6] cfo=1.5 csi=nr_imperfect
+[SBATCH CONFIG] aiepog cpus=64 snr_workers=5 max_patterns=50000 free_dim_cap=16
+[RUNTIME] python=/scratch/rsadve1/venvs/grand5g/bin/python
+[RUNTIME] numba_available=True numba_threads=64 disable_numba=False
+[RUNTIME] results_dir=results/run_hybrid_ldpc_grand_aiepog_20260409_it08_33532103_0
+[RUN] code=sionna5g_k1024_n2048_qm1 it=8 eval_snr=[6.0, 6.5, 7.0, 7.5, 8.0]
+[RUN] calib={'calib_total_frames': 5186, 'calib_failed_frames': 1400, 'calib_bit_rows': 5743862, 'calib_block_rows': 71485, 'bit_model_ready': True, 'block_model_ready': True, 'bit_model_path': 'results/run_hybrid_ldpc_grand_aiepog_20260409_it08_33532103_0/aiepog_bit_student_it08.npz', 'block_model_path': 'results/run_hybrid_ldpc_grand_aiepog_20260409_it08_33532103_0/aiepog_block_student_it08.npz', 'pattern_stats_path': 'results/run_hybrid_ldpc_grand_aiepog_20260409_it08_33532103_0/aiepog_pattern_stats_it08.npz', 'size_choices': [2, 4, 8, 12, 16, 24, 32]}
+[RUN] aiepog max_patterns=50000 pool=96 tx_info_pool=64 punct_pool=20 tx_par_pool=10
+[RUN] eval_workers=5 threads_per_worker=12 total_cpus=64
+
+=== AIEPOG HYBRID EVAL ===
+SNR (dB)                         : 6.00
+Frames simulated                 : 403
+LDPC FER / BER                   : 2.531017e-01 / 3.726446e-02
+Hybrid FER / BER                 : 2.481390e-01 / 3.725962e-02
+Avg stage-1 iters/frame          : 5.107
+Failed frame rate                : 0.253102
+GRAND invocation rate            : 0.253102
+GRAND rescue rate | invoked      : 0.019608
+Info rescue rate | invoked       : 0.019608
+Parity-only rescue | invoked     : 0.000000
+Avg patterns tested | invoked    : 0.020
+Avg candidate pool | invoked     : 138.265
+Avg predicted mass | invoked     : 774.870
+Avg block-peak | invoked         : 1.232
+Avg queue max | invoked          : 0.000
+Avg queue dropped | invoked      : 0.000
+Avg zero-synd candidates | inv   : 0.020
+Success pattern weight           : 23.000
+Success first-cost               : 14.451
+Avg stage-1 decoder us           : 19115.873
+Avg GRAND decoder us             : 271573.822
+Avg total hybrid decoder us      : 87851.679
+
+=== AIEPOG HYBRID EVAL ===
+SNR (dB)                         : 6.50
+Frames simulated                 : 464
+LDPC FER / BER                   : 2.198276e-01 / 2.931792e-02
+Hybrid FER / BER                 : 2.155172e-01 / 2.931582e-02
+Avg stage-1 iters/frame          : 4.765
+Failed frame rate                : 0.219828
+GRAND invocation rate            : 0.219828
+GRAND rescue rate | invoked      : 0.019608
+Info rescue rate | invoked       : 0.009804
+Parity-only rescue | invoked     : 0.009804
+Avg patterns tested | invoked    : 0.010
+Avg candidate pool | invoked     : 138.578
+Avg predicted mass | invoked     : 763.197
+Avg block-peak | invoked         : 1.219
+Avg queue max | invoked          : 0.000
+Avg queue dropped | invoked      : 0.000
+Avg zero-synd candidates | inv   : 0.020
+Success pattern weight           : 10.000
+Success first-cost               : 5.935
+Avg stage-1 decoder us           : 18097.195
+Avg GRAND decoder us             : 267815.822
+Avg total hybrid decoder us      : 76970.501
+
+=== AIEPOG HYBRID EVAL ===
+SNR (dB)                         : 7.00
+Frames simulated                 : 630
+LDPC FER / BER                   : 1.603175e-01 / 2.243769e-02
+Hybrid FER / BER                 : 1.587302e-01 / 2.243614e-02
+Avg stage-1 iters/frame          : 4.600
+Failed frame rate                : 0.160317
+GRAND invocation rate            : 0.160317
+GRAND rescue rate | invoked      : 0.009901
+Info rescue rate | invoked       : 0.009901
+Parity-only rescue | invoked     : 0.000000
+Avg patterns tested | invoked    : 0.010
+Avg candidate pool | invoked     : 136.554
+Avg predicted mass | invoked     : 774.350
+Avg block-peak | invoked         : 1.237
+Avg queue max | invoked          : 0.000
+Avg queue dropped | invoked      : 0.000
+Avg zero-synd candidates | inv   : 0.010
+Success pattern weight           : 7.000
+Success first-cost               : 4.319
+Avg stage-1 decoder us           : 16323.421
+Avg GRAND decoder us             : 259283.388
+Avg total hybrid decoder us      : 57891.075
+
+=== AIEPOG HYBRID EVAL ===
+SNR (dB)                         : 7.50
+Frames simulated                 : 737
+LDPC FER / BER                   : 1.370421e-01 / 1.828703e-02
+Hybrid FER / BER                 : 1.356852e-01 / 1.828703e-02
+Avg stage-1 iters/frame          : 4.372
+Failed frame rate                : 0.137042
+GRAND invocation rate            : 0.137042
+GRAND rescue rate | invoked      : 0.009901
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.009901
+Avg patterns tested | invoked    : 0.000
+Avg candidate pool | invoked     : 137.525
+Avg predicted mass | invoked     : 764.395
+Avg block-peak | invoked         : 1.227
+Avg queue max | invoked          : 0.000
+Avg queue dropped | invoked      : 0.000
+Avg zero-synd candidates | inv   : 0.010
+Success pattern weight           : 1.000
+Success first-cost               : 0.000
+Avg stage-1 decoder us           : 15772.182
+Avg GRAND decoder us             : 249593.570
+Avg total hybrid decoder us      : 49976.999
+
+=== AIEPOG HYBRID EVAL ===
+SNR (dB)                         : 8.00
+Frames simulated                 : 736
+LDPC FER / BER                   : 1.385870e-01 / 1.957238e-02
+Hybrid FER / BER                 : 1.358696e-01 / 1.956973e-02
+Avg stage-1 iters/frame          : 4.212
+Failed frame rate                : 0.138587
+GRAND invocation rate            : 0.138587
+GRAND rescue rate | invoked      : 0.019608
+Info rescue rate | invoked       : 0.019608
+Parity-only rescue | invoked     : 0.000000
+Avg patterns tested | invoked    : 0.020
+Avg candidate pool | invoked     : 138.176
+Avg predicted mass | invoked     : 770.663
+Avg block-peak | invoked         : 1.232
+Avg queue max | invoked          : 0.000
+Avg queue dropped | invoked      : 0.000
+Avg zero-synd candidates | inv   : 0.020
+Success pattern weight           : 20.000
+Success first-cost               : 12.705
+Avg stage-1 decoder us           : 23218.767
+Avg GRAND decoder us             : 277342.465
+Avg total hybrid decoder us      : 61654.815
+[SAVE] summary=results/run_hybrid_ldpc_grand_aiepog_20260409_it08_33532103_0/aiepog_it08_20260409-175700_summary.csv
+[SAVE] raw=results/run_hybrid_ldpc_grand_aiepog_20260409_it08_33532103_0/aiepog_it08_20260409-175700_raw.pkl
+[SAVE] config=results/run_hybrid_ldpc_grand_aiepog_20260409_it08_33532103_0/aiepog_it08_20260409-175700_config.json
+[SAVE] bit_model=results/run_hybrid_ldpc_grand_aiepog_20260409_it08_33532103_0/aiepog_bit_student_it08.npz
+[SAVE] block_model=results/run_hybrid_ldpc_grand_aiepog_20260409_it08_33532103_0/aiepog_block_student_it08.npz
+[SAVE] pattern_stats=results/run_hybrid_ldpc_grand_aiepog_20260409_it08_33532103_0/aiepog_pattern_stats_it08.npz

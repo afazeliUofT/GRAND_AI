@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=hyb_ppog_20260408
+#SBATCH --job-name=hyb_aiepog_20260409
 #SBATCH --account=def-rsadve
-#SBATCH --time=12:00:00
+#SBATCH --time=10:00:00
 #SBATCH --cpus-per-task=64
 #SBATCH --mem=0
 #SBATCH --array=0-2%3
@@ -100,11 +100,11 @@ export LDPC_GRAND_DISABLE_NUMBA=0
 export EVAL_SNR_WORKERS="${EVAL_SNR_WORKERS:-5}"
 
 # Same realistic 5G receiver chain for legacy LDPC and hybrid.
-# PPOG changes:
-# 1) bounded best-first queue (no heapq.nsmallest bottleneck)
-# 2) first valid codeword wins in posterior order
-# 3) 50K hard cap per failed frame
-# 4) nonlinear distilled students + parallel SNR evaluation using 64 CPUs
+# AIEPOG changes:
+# 1) the live path now uses exact parity-constrained solves instead of the old token-combination search
+# 2) candidate assignments inside each exact family are tried in approximate posterior order
+# 3) total GRAND cap stays at 50K patterns per failed frame
+# 4) AI is stronger and is used for pool selection, block ranking, and pair-block prefix selection
 
 export CHANNEL_NAME=SIONNA_TDL
 export SIONNA_5G_K=1024
@@ -113,73 +113,82 @@ export SIONNA_5G_QM=1
 export SIONNA_TDL_MODEL=B
 export SIONNA_TDL_DELAY_SPREAD_S=6.0e-8
 export SIONNA_TDL_CARRIER_FREQUENCY_HZ=3.5e9
-export SIONNA_TDL_MIN_SPEED=0.2
-export SIONNA_TDL_MAX_SPEED=1.0
+export SIONNA_TDL_MIN_SPEED=0.1
+export SIONNA_TDL_MAX_SPEED=0.6
 export SIONNA_OFDM_FFT_SIZE=512
 export SIONNA_OFDM_SUBCARRIER_SPACING_HZ=15000
-export SIONNA_CFO_HZ=4.0
+export SIONNA_CFO_HZ=1.5
 export SIONNA_CSI_MODE=nr_imperfect
 export SIONNA_CSI_PILOT_STRIDE=8
-export SIONNA_CSI_SMOOTH_PILOTS=3
-export SIONNA_CSI_EST_SNR_DB=26
-export SIONNA_CSI_PHASE_DRIFT_STD_DEG=0.15
-export SIONNA_CSI_AMP_RIPPLE_DB=0.06
-export SIONNA_CSI_DELAY_BIAS_NS=0.8
+export SIONNA_CSI_SMOOTH_PILOTS=5
+export SIONNA_CSI_EST_SNR_DB=28
+export SIONNA_CSI_PHASE_DRIFT_STD_DEG=0.08
+export SIONNA_CSI_AMP_RIPPLE_DB=0.04
+export SIONNA_CSI_DELAY_BIAS_NS=0.4
 export SIONNA_CSI_BLOCK_SC=8
 export SIONNA_LLR_MAX=50.0
 
 export LDPC_ALPHA=0.80
 export TARGET_FRAME_ERRORS=100
 export MAX_FRAMES=150000
-export CALIB_TARGET_FAILED_FRAMES=1000
-export CALIB_MAX_FRAMES=320000
+export CALIB_TARGET_FAILED_FRAMES=1400
+export CALIB_MAX_FRAMES=420000
 export CALIB_NEG_RATIO=6.0
-export CALIB_HARD_NEG_CAP=128
+export CALIB_HARD_NEG_CAP=160
 
-export AI_TEACHER_HIDDEN=160
-export AI_STUDENT_HIDDEN=64
-export AI_TEACHER_EPOCHS=40
-export AI_STUDENT_EPOCHS=30
+export AI_TEACHER_HIDDEN=224
+export AI_STUDENT_HIDDEN=96
+export AI_TEACHER_EPOCHS=60
+export AI_STUDENT_EPOCHS=45
 export AI_BATCH_SIZE=4096
-export AI_TEACHER_LR=0.010
-export AI_STUDENT_LR=0.018
-export AI_DISTILL_TEMP=2.5
+export AI_TEACHER_LR=0.008
+export AI_STUDENT_LR=0.014
+export AI_DISTILL_TEMP=2.8
 
-export GRAND_TX_INFO_POOL=80
-export GRAND_PUNCTURED_INFO_POOL=32
-export GRAND_TX_PARITY_POOL=24
-export GRAND_SINGLE_POOL=96
-export GRAND_TOP_BLOCKS=16
-export GRAND_PAIR_TOP_BLOCKS=8
-export GRAND_BLOCK_BEAM_WIDTH=64
-export GRAND_EXPAND_TOP_K=16
-export GRAND_MAX_ATOMS_PER_PATTERN=4
+export CALIB_TX_INFO_POOL=64
+export CALIB_PUNCTURED_INFO_POOL=24
+export CALIB_TX_PARITY_POOL=12
+export CALIB_WEIGHT_CAP=32
+export CALIB_FREE_DIM_CAP=14
+export CALIB_MAX_CANDIDATES=6144
+
+export GRAND_TX_INFO_POOL=64
+export GRAND_PUNCTURED_INFO_POOL=20
+export GRAND_TX_PARITY_POOL=10
+export GRAND_ROUND2_EXTRA_INFO=20
+export GRAND_ROUND2_EXTRA_PUNCTURED=10
+export GRAND_ROUND2_EXTRA_PARITY=8
+export GRAND_TOP_BLOCKS=14
+export GRAND_PAIR_TOP_BLOCKS=6
+export GRAND_BLOCK_MASK_VARIANTS=6
+export GRAND_BLOCK_REFINE_BITS=14
+export GRAND_GLOBAL_TOP_BITS=24
+export GRAND_EXACT_POOL_CAP=72
 export GRAND_MAX_PATTERNS=50000
-export GRAND_MAX_SUPPORT_BITS=160
-export GRAND_QUEUE_CAP=16384
-export GRAND_BLOCK_PREFIX_SIZES="4,8,12,16,24,32"
+export GRAND_MAX_WEIGHT=160
+export GRAND_FREE_DIM_CAP=16
 export GRAND_PROB_MIN=1.0e-5
-export GRAND_PROB_MAX=0.90
+export GRAND_PROB_MAX=0.35
 
-export RNG_SEED_GLOBAL=20260408
+export RNG_SEED_GLOBAL=20260409
 
 case "${SLURM_ARRAY_TASK_ID}" in
   0)
     export STAGE1_ITERS=8
-    export CALIB_SNR_SWEEP="6.0,6.5,7.0,7.5"
-    export EVAL_SNR_SWEEP="6.5,7.0,7.5,8.0,8.5"
+    export CALIB_SNR_SWEEP="5.5,6.0,6.5,7.0"
+    export EVAL_SNR_SWEEP="6.0,6.5,7.0,7.5,8.0"
     ITER_TAG="it08"
     ;;
   1)
     export STAGE1_ITERS=15
-    export CALIB_SNR_SWEEP="6.5,7.0,7.5,8.0"
-    export EVAL_SNR_SWEEP="7.0,7.5,8.0,8.5,9.0"
+    export CALIB_SNR_SWEEP="6.0,6.5,7.0,7.5"
+    export EVAL_SNR_SWEEP="6.5,7.0,7.5,8.0,8.5"
     ITER_TAG="it15"
     ;;
   2)
     export STAGE1_ITERS=25
-    export CALIB_SNR_SWEEP="7.0,7.5,8.0,8.5"
-    export EVAL_SNR_SWEEP="7.5,8.0,8.5,9.0,9.5"
+    export CALIB_SNR_SWEEP="6.5,7.0,7.5,8.0"
+    export EVAL_SNR_SWEEP="7.0,7.5,8.0,8.5,9.0"
     ITER_TAG="it25"
     ;;
   *)
@@ -188,12 +197,12 @@ case "${SLURM_ARRAY_TASK_ID}" in
     ;;
 esac
 
-RESULTS_DIR="results/run_hybrid_ldpc_grand_ppog_20260408_${ITER_TAG}_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+RESULTS_DIR="results/run_hybrid_ldpc_grand_aiepog_20260409_${ITER_TAG}_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 mkdir -p "$RESULTS_DIR"
 
 printf '[SBATCH CONFIG] task=%s it=%s eval_snr=%s calib_snr=%s\n' "$SLURM_ARRAY_TASK_ID" "$STAGE1_ITERS" "$EVAL_SNR_SWEEP" "$CALIB_SNR_SWEEP"
 printf '[SBATCH CONFIG] channel=%s tdl=%s delay=%s speed=[%s,%s] cfo=%s csi=%s\n' "$CHANNEL_NAME" "$SIONNA_TDL_MODEL" "$SIONNA_TDL_DELAY_SPREAD_S" "$SIONNA_TDL_MIN_SPEED" "$SIONNA_TDL_MAX_SPEED" "$SIONNA_CFO_HZ" "$SIONNA_CSI_MODE"
-printf '[SBATCH CONFIG] ppog cpus=%s snr_workers=%s max_patterns=%s queue_cap=%s\n' "$SLURM_CPUS_PER_TASK" "$EVAL_SNR_WORKERS" "$GRAND_MAX_PATTERNS" "$GRAND_QUEUE_CAP"
+printf '[SBATCH CONFIG] aiepog cpus=%s snr_workers=%s max_patterns=%s free_dim_cap=%s\n' "$SLURM_CPUS_PER_TASK" "$EVAL_SNR_WORKERS" "$GRAND_MAX_PATTERNS" "$GRAND_FREE_DIM_CAP"
 
-python -u hybrid_ldpc_grand_ppog_20260408.py "$RESULTS_DIR" \
+python -u hybrid_ldpc_grand_aiepog_20260409.py "$RESULTS_DIR" \
   2> >(grep -vE 'oneDNN custom operations are on|Unable to register cuFFT factory|All log messages before absl::InitializeLog|Unable to register cuDNN factory|Unable to register cuBLAS factory|computation placer already registered' >&2)
