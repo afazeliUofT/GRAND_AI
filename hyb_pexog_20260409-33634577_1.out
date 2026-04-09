@@ -1,0 +1,220 @@
+{
+  "errors": {},
+  "python": "/scratch/rsadve1/venvs/grand5g/bin/python",
+  "status": {
+    "LDPC5GEncoder_ok": true,
+    "TDL_ok": true,
+    "numba_ok": true,
+    "numpy_ok": true,
+    "scipy_ok": true,
+    "sionna_ok": true
+  }
+}
+[SBATCH CONFIG] task=1 it=15 eval_snr=8,9,10,11,12,13,14,15 calib_snr=7,8,9,10
+[SBATCH CONFIG] channel=SIONNA_TDL tdl=B delay=4.0e-8 speed=[0.1,0.5] cfo=2.0 csi=nr_imperfect
+[SBATCH CONFIG] pexog cpus=64 snr_workers=8 max_patterns=50000 queue_cap=16384
+[RUNTIME] python=/scratch/rsadve1/venvs/grand5g/bin/python
+[RUNTIME] numba_available=True numba_threads=64 disable_numba=False
+[RUNTIME] results_dir=results/run_hybrid_ldpc_grand_pexog_20260409_it15_33634577_1
+[RUN] code=sionna5g_k1024_n2048_qm1 it=15 eval_snr=[8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0]
+[RUN] calib={'calib_total_frames': 7586, 'calib_failed_frames': 1200, 'calib_bit_rows': 5999914, 'calib_block_rows': 62125, 'bit_model_ready': True, 'block_model_ready': True, 'bit_model_path': 'results/run_hybrid_ldpc_grand_pexog_20260409_it15_33634577_1/pexog_bit_student_it15.npz', 'block_model_path': 'results/run_hybrid_ldpc_grand_pexog_20260409_it15_33634577_1/pexog_block_student_it15.npz', 'pattern_stats_path': 'results/run_hybrid_ldpc_grand_pexog_20260409_it15_33634577_1/pexog_pattern_stats_it15.npz', 'size_choices': [2, 4, 6, 8, 12, 16], 'avg_fail_error_mass': 1703.6324462890625, 'avg_fail_hard_mass': 1703.6324462890625, 'avg_fail_synd_mass': 1671.844970703125}
+[RUN] pexog max_patterns=50000 pool=96 tx_info_pool=72 punct_pool=36 tx_par_pool=20
+[RUN] eval_workers=8 threads_per_worker=8 total_cpus=64
+
+=== PEXOG HYBRID EVAL ===
+SNR (dB)                         : 8.00
+Frames simulated                 : 561
+LDPC FER / BER                   : 1.122995e-01 / 2.380480e-02
+Hybrid FER / BER                 : 1.069519e-01 / 2.380480e-02
+Avg stage-1 iters/frame          : 5.053
+Failed frame rate                : 0.112299
+GRAND invocation rate            : 0.112299
+GRAND rescue rate | invoked      : 0.047619
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.047619
+Avg patterns tested | invoked    : 4.302
+Avg candidate pool | invoked     : 63.889
+Avg predicted mass | invoked     : 1557.556
+Avg block-peak | invoked         : 1.258
+Avg queue max | invoked          : 0.000
+Avg queue dropped | invoked      : 0.000
+Avg zero-synd candidates | inv   : 0.079
+Success pattern weight           : 10.333
+Success first-cost               : -1.321
+Avg stage-1 decoder us           : 9582.155
+Avg GRAND decoder us             : 2193867.906
+Avg total hybrid decoder us      : 255952.347
+
+=== PEXOG HYBRID EVAL ===
+SNR (dB)                         : 9.00
+Frames simulated                 : 828
+LDPC FER / BER                   : 7.729469e-02 / 1.441019e-02
+Hybrid FER / BER                 : 7.246377e-02 / 1.440784e-02
+Avg stage-1 iters/frame          : 4.502
+Failed frame rate                : 0.077295
+GRAND invocation rate            : 0.077295
+GRAND rescue rate | invoked      : 0.062500
+Info rescue rate | invoked       : 0.031250
+Parity-only rescue | invoked     : 0.031250
+Avg patterns tested | invoked    : 4.219
+Avg candidate pool | invoked     : 64.000
+Avg predicted mass | invoked     : 1391.735
+Avg block-peak | invoked         : 1.238
+Avg queue max | invoked          : 0.000
+Avg queue dropped | invoked      : 0.000
+Avg zero-synd candidates | inv   : 0.094
+Success pattern weight           : 20.000
+Success first-cost               : -0.453
+Avg stage-1 decoder us           : 8802.967
+Avg GRAND decoder us             : 2134358.008
+Avg total hybrid decoder us      : 173777.499
+
+=== PEXOG HYBRID EVAL ===
+SNR (dB)                         : 10.00
+Frames simulated                 : 1140
+LDPC FER / BER                   : 5.526316e-02 / 1.136068e-02
+Hybrid FER / BER                 : 5.263158e-02 / 1.136068e-02
+Avg stage-1 iters/frame          : 3.976
+Failed frame rate                : 0.055263
+GRAND invocation rate            : 0.055263
+GRAND rescue rate | invoked      : 0.047619
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.047619
+Avg patterns tested | invoked    : 4.302
+Avg candidate pool | invoked     : 64.000
+Avg predicted mass | invoked     : 1555.348
+Avg block-peak | invoked         : 1.254
+Avg queue max | invoked          : 0.000
+Avg queue dropped | invoked      : 0.000
+Avg zero-synd candidates | inv   : 0.048
+Success pattern weight           : 8.000
+Success first-cost               : -2.364
+Avg stage-1 decoder us           : 7942.395
+Avg GRAND decoder us             : 2320244.808
+Avg total hybrid decoder us      : 136166.450
+
+=== PEXOG HYBRID EVAL ===
+SNR (dB)                         : 12.00
+Frames simulated                 : 2353
+LDPC FER / BER                   : 2.592435e-02 / 4.862476e-03
+Hybrid FER / BER                 : 2.549936e-02 / 4.862476e-03
+Avg stage-1 iters/frame          : 3.094
+Failed frame rate                : 0.025924
+GRAND invocation rate            : 0.025924
+GRAND rescue rate | invoked      : 0.016393
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.016393
+Avg patterns tested | invoked    : 4.115
+Avg candidate pool | invoked     : 64.000
+Avg predicted mass | invoked     : 1423.427
+Avg block-peak | invoked         : 1.264
+Avg queue max | invoked          : 0.000
+Avg queue dropped | invoked      : 0.000
+Avg zero-synd candidates | inv   : 0.016
+Success pattern weight           : 6.000
+Success first-cost               : -1.836
+Avg stage-1 decoder us           : 6630.158
+Avg GRAND decoder us             : 2242774.966
+Avg total hybrid decoder us      : 64772.646
+
+=== PEXOG HYBRID EVAL ===
+SNR (dB)                         : 11.00
+Frames simulated                 : 1680
+LDPC FER / BER                   : 3.630952e-02 / 7.710193e-03
+Hybrid FER / BER                 : 3.571429e-02 / 7.710193e-03
+Avg stage-1 iters/frame          : 3.446
+Failed frame rate                : 0.036310
+GRAND invocation rate            : 0.036310
+GRAND rescue rate | invoked      : 0.016393
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.016393
+Avg patterns tested | invoked    : 4.033
+Avg candidate pool | invoked     : 64.000
+Avg predicted mass | invoked     : 1610.546
+Avg block-peak | invoked         : 1.289
+Avg queue max | invoked          : 0.000
+Avg queue dropped | invoked      : 0.000
+Avg zero-synd candidates | inv   : 0.016
+Success pattern weight           : 31.000
+Success first-cost               : -7.108
+Avg stage-1 decoder us           : 7317.477
+Avg GRAND decoder us             : 2415675.599
+Avg total hybrid decoder us      : 95029.508
+
+=== PEXOG HYBRID EVAL ===
+SNR (dB)                         : 13.00
+Frames simulated                 : 3929
+LDPC FER / BER                   : 1.628913e-02 / 2.888179e-03
+Hybrid FER / BER                 : 1.527106e-02 / 2.887931e-03
+Avg stage-1 iters/frame          : 2.835
+Failed frame rate                : 0.016289
+GRAND invocation rate            : 0.016289
+GRAND rescue rate | invoked      : 0.062500
+Info rescue rate | invoked       : 0.015625
+Parity-only rescue | invoked     : 0.046875
+Avg patterns tested | invoked    : 4.359
+Avg candidate pool | invoked     : 64.000
+Avg predicted mass | invoked     : 1349.096
+Avg block-peak | invoked         : 1.244
+Avg queue max | invoked          : 0.000
+Avg queue dropped | invoked      : 0.000
+Avg zero-synd candidates | inv   : 0.094
+Success pattern weight           : 13.000
+Success first-cost               : -1.729
+Avg stage-1 decoder us           : 6127.135
+Avg GRAND decoder us             : 2278837.733
+Avg total hybrid decoder us      : 43247.423
+
+=== PEXOG HYBRID EVAL ===
+SNR (dB)                         : 14.00
+Frames simulated                 : 6407
+LDPC FER / BER                   : 1.014515e-02 / 1.596002e-03
+Hybrid FER / BER                 : 9.364757e-03 / 1.596002e-03
+Avg stage-1 iters/frame          : 2.535
+Failed frame rate                : 0.010145
+GRAND invocation rate            : 0.010145
+GRAND rescue rate | invoked      : 0.076923
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.076923
+Avg patterns tested | invoked    : 4.246
+Avg candidate pool | invoked     : 63.877
+Avg predicted mass | invoked     : 1214.252
+Avg block-peak | invoked         : 1.225
+Avg queue max | invoked          : 0.000
+Avg queue dropped | invoked      : 0.000
+Avg zero-synd candidates | inv   : 0.108
+Success pattern weight           : 14.400
+Success first-cost               : -0.285
+Avg stage-1 decoder us           : 5683.507
+Avg GRAND decoder us             : 2119188.820
+Avg total hybrid decoder us      : 27183.003
+
+=== PEXOG HYBRID EVAL ===
+SNR (dB)                         : 15.00
+Frames simulated                 : 9892
+LDPC FER / BER                   : 6.773150e-03 / 1.209942e-03
+Hybrid FER / BER                 : 6.065507e-03 / 1.209942e-03
+Avg stage-1 iters/frame          : 2.328
+Failed frame rate                : 0.006773
+GRAND invocation rate            : 0.006773
+GRAND rescue rate | invoked      : 0.104478
+Info rescue rate | invoked       : 0.000000
+Parity-only rescue | invoked     : 0.104478
+Avg patterns tested | invoked    : 4.522
+Avg candidate pool | invoked     : 63.701
+Avg predicted mass | invoked     : 1324.119
+Avg block-peak | invoked         : 1.209
+Avg queue max | invoked          : 0.000
+Avg queue dropped | invoked      : 0.000
+Avg zero-synd candidates | inv   : 0.164
+Success pattern weight           : 8.857
+Success first-cost               : -0.980
+Avg stage-1 decoder us           : 5681.468
+Avg GRAND decoder us             : 2379770.948
+Avg total hybrid decoder us      : 21800.014
+[SAVE] summary=results/run_hybrid_ldpc_grand_pexog_20260409_it15_33634577_1/pexog_it15_20260409-202158_summary.csv
+[SAVE] raw=results/run_hybrid_ldpc_grand_pexog_20260409_it15_33634577_1/pexog_it15_20260409-202158_raw.pkl
+[SAVE] config=results/run_hybrid_ldpc_grand_pexog_20260409_it15_33634577_1/pexog_it15_20260409-202158_config.json
+[SAVE] bit_model=results/run_hybrid_ldpc_grand_pexog_20260409_it15_33634577_1/pexog_bit_student_it15.npz
+[SAVE] block_model=results/run_hybrid_ldpc_grand_pexog_20260409_it15_33634577_1/pexog_block_student_it15.npz
+[SAVE] pattern_stats=results/run_hybrid_ldpc_grand_pexog_20260409_it15_33634577_1/pexog_pattern_stats_it15.npz
