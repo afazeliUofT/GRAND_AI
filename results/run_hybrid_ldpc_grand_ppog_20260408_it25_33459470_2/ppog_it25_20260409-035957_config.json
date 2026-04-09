@@ -9,34 +9,34 @@
     "calib_tx_parity_pool": 16,
     "calib_weight_cap": 12,
     "hard_negative_cap": 128,
-    "max_frames": 260000,
+    "max_frames": 320000,
     "neg_ratio": 6.0,
-    "student_epochs": 22,
-    "student_lr": 0.02,
-    "target_failed_frames": 700,
-    "teacher_epochs": 28,
-    "teacher_hidden": 96,
+    "student_epochs": 30,
+    "student_hidden": 64,
+    "student_lr": 0.018,
+    "target_failed_frames": 1000,
+    "teacher_epochs": 40,
+    "teacher_hidden": 160,
     "teacher_lr": 0.01,
     "temperature": 2.5
   },
   "calib_snr_db": [
-    6.5,
     7.0,
     7.5,
-    8.0
+    8.0,
+    8.5
   ],
   "calibration": {
-    "bit_model_path": "results/run_hybrid_ldpc_grand_taiog_20260406_it08_32865478_0/aipog_bit_student_it08.npz",
+    "bit_model_path": "results/run_hybrid_ldpc_grand_ppog_20260408_it25_33459470_2/ppog_bit_student_it25.npz",
     "bit_model_ready": true,
-    "block_model_path": "results/run_hybrid_ldpc_grand_taiog_20260406_it08_32865478_0/aipog_block_student_it08.npz",
+    "block_model_path": "results/run_hybrid_ldpc_grand_ppog_20260408_it25_33459470_2/ppog_block_student_it25.npz",
     "block_model_ready": true,
-    "calib_bit_rows": 2716350,
-    "calib_block_rows": 35711,
-    "calib_failed_frames": 700,
-    "calib_total_frames": 3063,
-    "pattern_stats_path": "results/run_hybrid_ldpc_grand_taiog_20260406_it08_32865478_0/aipog_pattern_stats_it08.npz",
+    "calib_bit_rows": 5157786,
+    "calib_block_rows": 51880,
+    "calib_failed_frames": 1000,
+    "calib_total_frames": 9081,
+    "pattern_stats_path": "results/run_hybrid_ldpc_grand_ppog_20260408_it25_33459470_2/ppog_pattern_stats_it25.npz",
     "size_choices": [
-      2,
       4,
       8,
       12,
@@ -47,20 +47,20 @@
   },
   "channel": {
     "CHANNEL_NAME": "SIONNA_TDL",
-    "SIONNA_CFO_HZ": "12.0",
+    "SIONNA_CFO_HZ": "4.0",
     "SIONNA_CSI_MODE": "nr_imperfect",
-    "SIONNA_TDL_DELAY_SPREAD_S": "1.0e-7",
-    "SIONNA_TDL_MAX_SPEED": "2.0",
-    "SIONNA_TDL_MIN_SPEED": "0.5",
+    "SIONNA_TDL_DELAY_SPREAD_S": "6.0e-8",
+    "SIONNA_TDL_MAX_SPEED": "1.0",
+    "SIONNA_TDL_MIN_SPEED": "0.2",
     "SIONNA_TDL_MODEL": "B"
   },
   "code": "sionna5g_k1024_n2048_qm1",
   "eval_snr_db": [
-    7.0,
     7.5,
     8.0,
     8.5,
-    9.0
+    9.0,
+    9.5
   ],
   "hybrid": {
     "ai_weight": 1.6,
@@ -71,7 +71,6 @@
     "block_mask_variants": 4,
     "block_mass_weight": 0.55,
     "block_prefix_sizes": [
-      2,
       4,
       8,
       12,
@@ -83,7 +82,7 @@
     "block_refine_bits": 16,
     "direct_top_bits": 8,
     "exact_pool_cap": 72,
-    "expand_top_k": 24,
+    "expand_top_k": 16,
     "frame_gate_threshold": 0.0,
     "free_dim_cap": 20,
     "gain_weight": 0.24,
@@ -93,7 +92,7 @@
     "info_bonus": 0.82,
     "llr_weight": 1.0,
     "max_atoms_per_pattern": 4,
-    "max_patterns": 200000,
+    "max_patterns": 50000,
     "max_support_bits": 160,
     "max_weight": 160,
     "osc_weight": 0.18,
@@ -105,12 +104,12 @@
       12,
       16
     ],
-    "pair_top_blocks": 6,
+    "pair_top_blocks": 8,
     "parity_penalty": 0.2,
     "prefix_keep": 8,
     "punctured_info_bonus": 0.46,
-    "punctured_info_pool": 24,
-    "queue_cap": 65536,
+    "punctured_info_pool": 32,
+    "queue_cap": 16384,
     "round2_extra_info": 12,
     "round2_extra_parity": 6,
     "round2_extra_punctured": 8,
@@ -119,7 +118,7 @@
     "support_penalty": 0.035,
     "sw_weight": 1.2,
     "syndrome_weight": 1.6,
-    "top_blocks": 12,
+    "top_blocks": 16,
     "traj_best_scale": 1.8,
     "traj_depth": 5,
     "traj_info_weight": 2.2,
@@ -129,8 +128,8 @@
     "traj_synd_weight": 0.1,
     "traj_try_top": 2,
     "tx_bonus": 0.16,
-    "tx_info_pool": 56,
-    "tx_parity_pool": 16
+    "tx_info_pool": 80,
+    "tx_parity_pool": 24
   },
   "k_info": 1024,
   "mc": {
@@ -140,5 +139,5 @@
   },
   "n_tx": 2048,
   "qm": 1,
-  "stage1_iters": 8
+  "stage1_iters": 25
 }

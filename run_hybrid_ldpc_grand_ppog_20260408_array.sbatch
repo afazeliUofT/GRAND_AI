@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH --job-name=hyb_taiog_20260406
+#SBATCH --job-name=hyb_ppog_20260408
 #SBATCH --account=def-rsadve
-#SBATCH --time=16:00:00
-#SBATCH --cpus-per-task=32
+#SBATCH --time=12:00:00
+#SBATCH --cpus-per-task=64
 #SBATCH --mem=0
 #SBATCH --array=0-2%3
 #SBATCH --output=%x-%A_%a.out
@@ -90,75 +90,89 @@ export GLOG_minloglevel=3
 export TF_ENABLE_ONEDNN_OPTS=0
 export TF_INTRA_OP=1
 export TF_INTER_OP=1
-export LDPC_GRAND_NUM_THREADS="${LDPC_GRAND_NUM_THREADS:-${SLURM_CPUS_PER_TASK:-32}}"
+export LDPC_GRAND_NUM_THREADS="${LDPC_GRAND_NUM_THREADS:-${SLURM_CPUS_PER_TASK:-64}}"
 export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export VECLIB_MAXIMUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export LDPC_GRAND_DISABLE_NUMBA=0
+export EVAL_SNR_WORKERS="${EVAL_SNR_WORKERS:-5}"
 
 # Same realistic 5G receiver chain for legacy LDPC and hybrid.
-# New fallback: TAIOG = true AI posterior-ordered GRAND over whole patterns with a 200K cap.
+# PPOG changes:
+# 1) bounded best-first queue (no heapq.nsmallest bottleneck)
+# 2) first valid codeword wins in posterior order
+# 3) 50K hard cap per failed frame
+# 4) nonlinear distilled students + parallel SNR evaluation using 64 CPUs
+
 export CHANNEL_NAME=SIONNA_TDL
 export SIONNA_5G_K=1024
 export SIONNA_5G_N=2048
 export SIONNA_5G_QM=1
 export SIONNA_TDL_MODEL=B
-export SIONNA_TDL_DELAY_SPREAD_S=1.0e-7
+export SIONNA_TDL_DELAY_SPREAD_S=6.0e-8
 export SIONNA_TDL_CARRIER_FREQUENCY_HZ=3.5e9
-export SIONNA_TDL_MIN_SPEED=0.5
-export SIONNA_TDL_MAX_SPEED=2.0
+export SIONNA_TDL_MIN_SPEED=0.2
+export SIONNA_TDL_MAX_SPEED=1.0
 export SIONNA_OFDM_FFT_SIZE=512
 export SIONNA_OFDM_SUBCARRIER_SPACING_HZ=15000
-export SIONNA_CFO_HZ=12.0
+export SIONNA_CFO_HZ=4.0
 export SIONNA_CSI_MODE=nr_imperfect
 export SIONNA_CSI_PILOT_STRIDE=8
 export SIONNA_CSI_SMOOTH_PILOTS=3
-export SIONNA_CSI_EST_SNR_DB=24
-export SIONNA_CSI_PHASE_DRIFT_STD_DEG=0.25
-export SIONNA_CSI_AMP_RIPPLE_DB=0.10
-export SIONNA_CSI_DELAY_BIAS_NS=1.5
+export SIONNA_CSI_EST_SNR_DB=26
+export SIONNA_CSI_PHASE_DRIFT_STD_DEG=0.15
+export SIONNA_CSI_AMP_RIPPLE_DB=0.06
+export SIONNA_CSI_DELAY_BIAS_NS=0.8
 export SIONNA_CSI_BLOCK_SC=8
 export SIONNA_LLR_MAX=50.0
 
 export LDPC_ALPHA=0.80
 export TARGET_FRAME_ERRORS=100
 export MAX_FRAMES=150000
-export CALIB_TARGET_FAILED_FRAMES=700
-export CALIB_MAX_FRAMES=260000
+export CALIB_TARGET_FAILED_FRAMES=1000
+export CALIB_MAX_FRAMES=320000
 export CALIB_NEG_RATIO=6.0
 export CALIB_HARD_NEG_CAP=128
 
-export AI_TEACHER_HIDDEN=96
-export AI_TEACHER_EPOCHS=28
-export AI_STUDENT_EPOCHS=22
+export AI_TEACHER_HIDDEN=160
+export AI_STUDENT_HIDDEN=64
+export AI_TEACHER_EPOCHS=40
+export AI_STUDENT_EPOCHS=30
 export AI_BATCH_SIZE=4096
 export AI_TEACHER_LR=0.010
-export AI_STUDENT_LR=0.020
+export AI_STUDENT_LR=0.018
 export AI_DISTILL_TEMP=2.5
 
-export GRAND_TX_INFO_POOL=56
-export GRAND_PUNCTURED_INFO_POOL=24
-export GRAND_TX_PARITY_POOL=16
+export GRAND_TX_INFO_POOL=80
+export GRAND_PUNCTURED_INFO_POOL=32
+export GRAND_TX_PARITY_POOL=24
 export GRAND_SINGLE_POOL=96
-export GRAND_MAX_PATTERNS=200000
+export GRAND_TOP_BLOCKS=16
+export GRAND_PAIR_TOP_BLOCKS=8
+export GRAND_BLOCK_BEAM_WIDTH=64
+export GRAND_EXPAND_TOP_K=16
+export GRAND_MAX_ATOMS_PER_PATTERN=4
+export GRAND_MAX_PATTERNS=50000
 export GRAND_MAX_SUPPORT_BITS=160
-export GRAND_PROB_MIN=1.0e-4
-export GRAND_PROB_MAX=0.49
+export GRAND_QUEUE_CAP=16384
+export GRAND_BLOCK_PREFIX_SIZES="4,8,12,16,24,32"
+export GRAND_PROB_MIN=1.0e-5
+export GRAND_PROB_MAX=0.90
 
-export RNG_SEED_GLOBAL=20260406
+export RNG_SEED_GLOBAL=20260408
 
 case "${SLURM_ARRAY_TASK_ID}" in
   0)
     export STAGE1_ITERS=8
-    export CALIB_SNR_SWEEP="6.5,7.0,7.5,8.0"
-    export EVAL_SNR_SWEEP="7.0,7.5,8.0,8.5,9.0"
+    export CALIB_SNR_SWEEP="6.0,6.5,7.0,7.5"
+    export EVAL_SNR_SWEEP="6.5,7.0,7.5,8.0,8.5"
     ITER_TAG="it08"
     ;;
   1)
     export STAGE1_ITERS=15
-    export CALIB_SNR_SWEEP="6.75,7.25,7.75,8.25"
+    export CALIB_SNR_SWEEP="6.5,7.0,7.5,8.0"
     export EVAL_SNR_SWEEP="7.0,7.5,8.0,8.5,9.0"
     ITER_TAG="it15"
     ;;
@@ -174,12 +188,12 @@ case "${SLURM_ARRAY_TASK_ID}" in
     ;;
 esac
 
-RESULTS_DIR="results/run_hybrid_ldpc_grand_taiog_20260406_${ITER_TAG}_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
+RESULTS_DIR="results/run_hybrid_ldpc_grand_ppog_20260408_${ITER_TAG}_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 mkdir -p "$RESULTS_DIR"
 
 printf '[SBATCH CONFIG] task=%s it=%s eval_snr=%s calib_snr=%s\n' "$SLURM_ARRAY_TASK_ID" "$STAGE1_ITERS" "$EVAL_SNR_SWEEP" "$CALIB_SNR_SWEEP"
 printf '[SBATCH CONFIG] channel=%s tdl=%s delay=%s speed=[%s,%s] cfo=%s csi=%s\n' "$CHANNEL_NAME" "$SIONNA_TDL_MODEL" "$SIONNA_TDL_DELAY_SPREAD_S" "$SIONNA_TDL_MIN_SPEED" "$SIONNA_TDL_MAX_SPEED" "$SIONNA_CFO_HZ" "$SIONNA_CSI_MODE"
-printf '[SBATCH CONFIG] aipogfix single_pool=%s tx_info=%s punct=%s tx_parity=%s max_patterns=%s max_support=%s\n' "$GRAND_SINGLE_POOL" "$GRAND_TX_INFO_POOL" "$GRAND_PUNCTURED_INFO_POOL" "$GRAND_TX_PARITY_POOL" "$GRAND_MAX_PATTERNS" "$GRAND_MAX_SUPPORT_BITS"
+printf '[SBATCH CONFIG] ppog cpus=%s snr_workers=%s max_patterns=%s queue_cap=%s\n' "$SLURM_CPUS_PER_TASK" "$EVAL_SNR_WORKERS" "$GRAND_MAX_PATTERNS" "$GRAND_QUEUE_CAP"
 
-python -u hybrid_ldpc_grand_taiog_20260406.py "$RESULTS_DIR" \
+python -u hybrid_ldpc_grand_ppog_20260408.py "$RESULTS_DIR" \
   2> >(grep -vE 'oneDNN custom operations are on|Unable to register cuFFT factory|All log messages before absl::InitializeLog|Unable to register cuDNN factory|Unable to register cuBLAS factory|computation placer already registered' >&2)

@@ -10,6 +10,8 @@ import itertools
 import heapq
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional, Any
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing as mp
 
 import numpy as np
 
@@ -189,12 +191,13 @@ class CalibrationConfig:
     max_frames: int = 150000
     neg_ratio: float = 6.0
     hard_negative_cap: int = 128
-    teacher_hidden: int = 64
-    teacher_epochs: int = 24
-    student_epochs: int = 20
+    teacher_hidden: int = 96
+    student_hidden: int = 64
+    teacher_epochs: int = 28
+    student_epochs: int = 22
     batch_size: int = 4096
     teacher_lr: float = 0.01
-    student_lr: float = 0.022
+    student_lr: float = 0.018
     temperature: float = 2.5
     calib_tx_info_pool: int = 26
     calib_punctured_info_pool: int = 14
@@ -213,7 +216,7 @@ class HybridConfig:
     round2_extra_parity: int = 6
     max_weight: int = 18
     free_dim_cap: int = 18
-    max_patterns: int = 200000
+    max_patterns: int = 50000
     frame_gate_threshold: float = 0.0
     gate_max_synd: int = 999
     gate_max_hard_ones: int = 999
@@ -229,8 +232,8 @@ class HybridConfig:
     block_prob_weight: float = 0.95
     block_mass_weight: float = 0.55
     block_combo_max: int = 3
-    top_blocks: int = 8
-    block_beam_width: int = 48
+    top_blocks: int = 12
+    block_beam_width: int = 64
     prefix_keep: int = 6
     block_refine_bits: int = 12
     global_top_bits: int = 20
@@ -245,12 +248,12 @@ class HybridConfig:
     traj_synd_weight: float = 0.10
     traj_best_scale: float = 1.80
     traj_second_scale: float = 1.25
-    single_pool: int = 56
-    pair_top_blocks: int = 6
-    queue_cap: int = 4096
-    expand_top_k: int = 24
+    single_pool: int = 96
+    pair_top_blocks: int = 8
+    queue_cap: int = 16384
+    expand_top_k: int = 16
     max_atoms_per_pattern: int = 4
-    max_support_bits: int = 128
+    max_support_bits: int = 160
     block_prefix_sizes: List[int] = field(default_factory=lambda: [2, 4, 8, 12, 16, 24, 32])
     pair_prefix_sizes: List[int] = field(default_factory=lambda: [4, 8, 12, 16])
     syndrome_weight: float = 1.60
@@ -1000,12 +1003,19 @@ class TinyTeacherMLP:
 
 
 class DistilledLinearStudent:
-    def __init__(self, d_in: int):
-        self.w = np.zeros(d_in, dtype=np.float32)
-        self.b = 0.0
+    def __init__(self, d_in: int, hidden: int = 64, seed: int = 0):
+        hidden = int(max(8, hidden))
+        rng = np.random.default_rng(int(seed))
+        self.hidden = hidden
+        self.W1 = (0.08 * rng.standard_normal((d_in, hidden))).astype(np.float32)
+        self.b1 = np.zeros(hidden, dtype=np.float32)
+        self.W2 = (0.08 * rng.standard_normal((hidden, 1))).astype(np.float32)
+        self.b2 = np.zeros(1, dtype=np.float32)
 
     def logits(self, X: np.ndarray) -> np.ndarray:
-        return (X @ self.w + self.b).astype(np.float32)
+        H = np.tanh(X @ self.W1 + self.b1[None, :]).astype(np.float32)
+        Z = H @ self.W2 + self.b2[None, :]
+        return Z[:, 0].astype(np.float32)
 
     def prob(self, X: np.ndarray) -> np.ndarray:
         return _sigmoid(self.logits(X))
@@ -1015,12 +1025,16 @@ class DistilledLinearStudent:
         n = X.shape[0]
         if n == 0:
             return
-        target = 0.65 * soft_target + 0.35 * hard_target
+        target = (0.72 * soft_target + 0.28 * hard_target).astype(np.float32)
         beta1, beta2, eps = 0.9, 0.999, 1e-8
-        mw = np.zeros_like(self.w)
-        vw = np.zeros_like(self.w)
-        mb = 0.0
-        vb = 0.0
+        mW1 = np.zeros_like(self.W1)
+        mb1 = np.zeros_like(self.b1)
+        mW2 = np.zeros_like(self.W2)
+        mb2 = np.zeros_like(self.b2)
+        vW1 = np.zeros_like(self.W1)
+        vb1 = np.zeros_like(self.b1)
+        vW2 = np.zeros_like(self.W2)
+        vb2 = np.zeros_like(self.b2)
         t = 0
         for _ in range(int(epochs)):
             order = rng.permutation(n)
@@ -1029,35 +1043,57 @@ class DistilledLinearStudent:
                 xb = X[idx]
                 yb = target[idx]
                 wb = sample_weight[idx]
-                logits = xb @ self.w + self.b
+                z1 = xb @ self.W1 + self.b1[None, :]
+                h = np.tanh(z1)
+                logits = (h @ self.W2 + self.b2[None, :])[:, 0]
                 p = _sigmoid(logits)
                 grad_logits = (p - yb) * wb
                 grad_logits /= max(1.0, float(wb.sum()))
-                gw = xb.T @ grad_logits
-                gb = float(grad_logits.sum())
+                gW2 = h.T @ grad_logits[:, None]
+                gb2 = np.array([grad_logits.sum()], dtype=np.float32)
+                gh = grad_logits[:, None] @ self.W2.T
+                gz1 = gh * (1.0 - h * h)
+                gW1 = xb.T @ gz1
+                gb1 = gz1.sum(axis=0)
                 t += 1
-                mw = beta1 * mw + (1.0 - beta1) * gw
-                vw = beta2 * vw + (1.0 - beta2) * (gw * gw)
-                mwhat = mw / (1.0 - beta1 ** t)
-                vwhat = vw / (1.0 - beta2 ** t)
-                self.w -= float(lr) * mwhat / (np.sqrt(vwhat) + eps)
-                mb = beta1 * mb + (1.0 - beta1) * gb
-                vb = beta2 * vb + (1.0 - beta2) * (gb * gb)
-                mbhat = mb / (1.0 - beta1 ** t)
-                vbhat = vb / (1.0 - beta2 ** t)
-                self.b -= float(lr) * mbhat / (math.sqrt(vbhat) + eps)
+                for P, G, M, V in (
+                    (self.W1, gW1, mW1, vW1),
+                    (self.b1, gb1, mb1, vb1),
+                    (self.W2, gW2, mW2, vW2),
+                    (self.b2, gb2, mb2, vb2),
+                ):
+                    M *= beta1
+                    M += (1.0 - beta1) * G
+                    V *= beta2
+                    V += (1.0 - beta2) * (G * G)
+                    mhat = M / (1.0 - beta1 ** t)
+                    vhat = V / (1.0 - beta2 ** t)
+                    P -= float(lr) * mhat / (np.sqrt(vhat) + eps)
 
     def save(self, path: str, feature_names: List[str]):
-        np.savez(path, w=self.w, b=np.array([self.b], dtype=np.float32), feature_names=np.array(feature_names, dtype=object))
+        np.savez(
+            path,
+            W1=self.W1.astype(np.float32),
+            b1=self.b1.astype(np.float32),
+            W2=self.W2.astype(np.float32),
+            b2=self.b2.astype(np.float32),
+            hidden=np.array([self.hidden], dtype=np.int32),
+            feature_names=np.asarray(feature_names, dtype=np.str_),
+        )
 
     @staticmethod
     def load(path: str):
         payload = np.load(path, allow_pickle=False)
-        obj = DistilledLinearStudent(int(payload["w"].shape[0]))
-        obj.w = payload["w"].astype(np.float32)
-        obj.b = float(payload["b"][0])
+        d_in = int(payload["W1"].shape[0])
+        hidden = int(payload["hidden"][0]) if "hidden" in payload else int(payload["W1"].shape[1])
+        obj = DistilledLinearStudent(d_in, hidden=hidden, seed=0)
+        obj.W1 = payload["W1"].astype(np.float32)
+        obj.b1 = payload["b1"].astype(np.float32)
+        obj.W2 = payload["W2"].astype(np.float32)
+        obj.b2 = payload["b2"].astype(np.float32)
         feature_names = [str(x) for x in payload["feature_names"].tolist()]
         return obj, feature_names
+
 
 
 FEATURE_NAMES = [
@@ -1082,6 +1118,12 @@ FEATURE_NAMES = [
     "is_punctured_info",
     "is_tx_parity",
     "is_latent",
+    "raw_inv_abs_llr",
+    "raw_abs_llr_norm",
+    "raw_hard_one",
+    "raw_final_disagree",
+    "raw_post_gap_norm",
+    "raw_sign_conflict",
 ]
 FEATURE_INDEX = {name: i for i, name in enumerate(FEATURE_NAMES)}
 
@@ -1094,27 +1136,39 @@ def _snapshot_pick(snapshots: Dict[str, Dict[int, np.ndarray]], wanted: int, fal
     return fallback
 
 
-def _feature_pack(code_cfg: CodeConfig, llr_final: np.ndarray, hard_final: np.ndarray, syndrome_final: np.ndarray, snapshots: Dict[str, Dict[int, np.ndarray]], stage1_iters: int) -> np.ndarray:
+def _feature_pack(
+    code_cfg: CodeConfig,
+    llr_raw: np.ndarray,
+    llr_final: np.ndarray,
+    hard_final: np.ndarray,
+    syndrome_final: np.ndarray,
+    snapshots: Dict[str, Dict[int, np.ndarray]],
+    stage1_iters: int,
+) -> np.ndarray:
     it_a = max(1, stage1_iters - 2)
     it_b = max(1, stage1_iters - 1)
     llr_a = snapshots["llr"].get(it_a, llr_final)
     llr_b = snapshots["llr"].get(it_b, llr_final)
     hb_a = snapshots["hard_bits"].get(it_a, hard_final)
     hb_b = snapshots["hard_bits"].get(it_b, hard_final)
+
     abs_final = np.abs(llr_final).astype(np.float32)
     mean_abs = float(abs_final.mean() + 1e-6)
     delta1 = np.abs(llr_final - llr_b).astype(np.float32)
     delta2 = np.abs(llr_b - llr_a).astype(np.float32)
     flip_rate = ((hb_a != hb_b).astype(np.float32) + (hb_b != hard_final).astype(np.float32)) * 0.5
+
     weak_thr = float(np.quantile(abs_final, 0.25)) if abs_final.size > 0 else 0.0
     weak_mask = abs_final <= weak_thr
     unsat_mask = syndrome_final.astype(bool)
     check_degree = code_cfg._check_degree
     bit_degree = np.maximum(1, code_cfg._bit_degree).astype(np.float32)
+
     weak_per_check = np.zeros(code_cfg.M, dtype=np.float32)
     for c in range(code_cfg.M):
         vs = code_cfg.checks_to_vars[c]
         weak_per_check[c] = float(np.sum(weak_mask[vs]))
+
     unsat_count = np.zeros(code_cfg.N, dtype=np.float32)
     weighted_unsat = np.zeros(code_cfg.N, dtype=np.float32)
     local_weak_frac = np.zeros(code_cfg.N, dtype=np.float32)
@@ -1137,10 +1191,21 @@ def _feature_pack(code_cfg: CodeConfig, llr_final: np.ndarray, hard_final: np.nd
         weighted_unsat[v] = wu
         if weak_den > 0.0:
             local_weak_frac[v] = weak_num / weak_den
+
     gain_norm = (2.0 * unsat_count - bit_degree) / bit_degree
     global_synd_ratio = float(np.mean(unsat_mask.astype(np.float32)))
     global_flip_ratio = float(np.mean(flip_rate))
     global_mean_abs = float(mean_abs / (1.0 + mean_abs))
+
+    llr_raw = np.asarray(llr_raw, dtype=np.float32)
+    abs_raw = np.abs(llr_raw).astype(np.float32)
+    mean_abs_raw = float(abs_raw.mean() + 1e-6)
+    raw_hard = (llr_raw < 0).astype(np.float32)
+    raw_inv_abs = 1.0 / (1.0 + abs_raw)
+    raw_final_disagree = (raw_hard != hard_final.astype(np.float32)).astype(np.float32)
+    raw_post_gap = np.abs(llr_raw - llr_final).astype(np.float32) / mean_abs_raw
+    raw_sign_conflict = ((llr_raw * llr_final) < 0.0).astype(np.float32)
+
     feat = np.stack(
         [
             1.0 / (1.0 + abs_final),
@@ -1164,6 +1229,12 @@ def _feature_pack(code_cfg: CodeConfig, llr_final: np.ndarray, hard_final: np.nd
             code_cfg._punctured_info_mask.astype(np.float32),
             code_cfg._tx_parity_mask.astype(np.float32),
             code_cfg._latent_mask.astype(np.float32),
+            raw_inv_abs,
+            abs_raw / mean_abs_raw,
+            raw_hard,
+            raw_final_disagree,
+            raw_post_gap,
+            raw_sign_conflict,
         ],
         axis=1,
     ).astype(np.float32)
@@ -1362,7 +1433,7 @@ def train_ai_ranker(rows: List[Tuple[np.ndarray, np.ndarray, np.ndarray]], cfg: 
     teacher = TinyTeacherMLP(d_in=Xn.shape[1], hidden=int(cfg.teacher_hidden), seed=int(seed + 11))
     teacher.fit(Xn, y, w, epochs=int(cfg.teacher_epochs), batch_size=int(cfg.batch_size), lr=float(cfg.teacher_lr), seed=int(seed + 13))
     teacher_soft = _sigmoid(teacher.logits(Xn) / float(cfg.temperature)).astype(np.float32)
-    student = DistilledLinearStudent(d_in=Xn.shape[1])
+    student = DistilledLinearStudent(d_in=Xn.shape[1], hidden=int(cfg.student_hidden), seed=int(seed + 15))
     student.fit(
         Xn,
         teacher_soft,
@@ -1381,8 +1452,11 @@ def train_ai_ranker(rows: List[Tuple[np.ndarray, np.ndarray, np.ndarray]], cfg: 
 def save_student(path: str, student: DistilledLinearStudent):
     np.savez(
         path,
-        w=student.w.astype(np.float32),
-        b=np.array([student.b], dtype=np.float32),
+        W1=student.W1.astype(np.float32),
+        b1=student.b1.astype(np.float32),
+        W2=student.W2.astype(np.float32),
+        b2=student.b2.astype(np.float32),
+        hidden=np.array([int(student.hidden)], dtype=np.int32),
         mu=student.norm_mu.astype(np.float32),
         sigma=student.norm_sigma.astype(np.float32),
         feature_names=np.asarray(FEATURE_NAMES, dtype=np.str_),
@@ -1390,10 +1464,13 @@ def save_student(path: str, student: DistilledLinearStudent):
 
 
 def load_student(path: str) -> DistilledLinearStudent:
-    payload = np.load(path, allow_pickle=True)
-    student = DistilledLinearStudent(int(payload["w"].shape[0]))
-    student.w = payload["w"].astype(np.float32)
-    student.b = float(payload["b"][0])
+    payload = np.load(path, allow_pickle=False)
+    hidden = int(payload["hidden"][0]) if "hidden" in payload else int(payload["W1"].shape[1])
+    student = DistilledLinearStudent(int(payload["W1"].shape[0]), hidden=hidden, seed=0)
+    student.W1 = payload["W1"].astype(np.float32)
+    student.b1 = payload["b1"].astype(np.float32)
+    student.W2 = payload["W2"].astype(np.float32)
+    student.b2 = payload["b2"].astype(np.float32)
     student.norm_mu = payload["mu"].astype(np.float32)
     student.norm_sigma = payload["sigma"].astype(np.float32)
     return student
@@ -1504,7 +1581,7 @@ def train_block_ranker(rows: List[Tuple[np.ndarray, np.ndarray, np.ndarray]], cf
     teacher = TinyTeacherMLP(d_in=Xn.shape[1], hidden=int(cfg.teacher_hidden), seed=int(seed + 31))
     teacher.fit(Xn, y, w, epochs=int(cfg.teacher_epochs), batch_size=int(cfg.batch_size), lr=float(cfg.teacher_lr), seed=int(seed + 37))
     teacher_soft = _sigmoid(teacher.logits(Xn) / float(cfg.temperature)).astype(np.float32)
-    student = DistilledLinearStudent(d_in=Xn.shape[1])
+    student = DistilledLinearStudent(d_in=Xn.shape[1], hidden=max(16, int(cfg.student_hidden)//2), seed=int(seed + 39))
     student.fit(Xn, teacher_soft, y, w, epochs=int(cfg.student_epochs), batch_size=int(cfg.batch_size), lr=float(cfg.student_lr), seed=int(seed + 41))
     student.norm_mu = mu.astype(np.float32)
     student.norm_sigma = sigma.astype(np.float32)
@@ -1514,8 +1591,11 @@ def train_block_ranker(rows: List[Tuple[np.ndarray, np.ndarray, np.ndarray]], cf
 def save_block_student(path: str, student: DistilledLinearStudent):
     np.savez(
         path,
-        w=student.w.astype(np.float32),
-        b=np.array([student.b], dtype=np.float32),
+        W1=student.W1.astype(np.float32),
+        b1=student.b1.astype(np.float32),
+        W2=student.W2.astype(np.float32),
+        b2=student.b2.astype(np.float32),
+        hidden=np.array([int(student.hidden)], dtype=np.int32),
         mu=student.norm_mu.astype(np.float32),
         sigma=student.norm_sigma.astype(np.float32),
         feature_names=np.asarray(BLOCK_FEATURE_NAMES, dtype=np.str_),
@@ -1524,9 +1604,12 @@ def save_block_student(path: str, student: DistilledLinearStudent):
 
 def load_block_student(path: str) -> DistilledLinearStudent:
     payload = np.load(path, allow_pickle=False)
-    student = DistilledLinearStudent(int(payload["w"].shape[0]))
-    student.w = payload["w"].astype(np.float32)
-    student.b = float(payload["b"][0])
+    hidden = int(payload["hidden"][0]) if "hidden" in payload else int(payload["W1"].shape[1])
+    student = DistilledLinearStudent(int(payload["W1"].shape[0]), hidden=hidden, seed=0)
+    student.W1 = payload["W1"].astype(np.float32)
+    student.b1 = payload["b1"].astype(np.float32)
+    student.W2 = payload["W2"].astype(np.float32)
+    student.b2 = payload["b2"].astype(np.float32)
     student.norm_mu = payload["mu"].astype(np.float32)
     student.norm_sigma = payload["sigma"].astype(np.float32)
     return student
@@ -1573,19 +1656,25 @@ FRAME_FEATURE_NAMES = [
 def save_gate_student(path: str, student: DistilledLinearStudent):
     np.savez(
         path,
-        w=student.w.astype(np.float32),
-        b=np.array([student.b], dtype=np.float32),
+        W1=student.W1.astype(np.float32),
+        b1=student.b1.astype(np.float32),
+        W2=student.W2.astype(np.float32),
+        b2=student.b2.astype(np.float32),
+        hidden=np.array([int(student.hidden)], dtype=np.int32),
         mu=student.norm_mu.astype(np.float32),
         sigma=student.norm_sigma.astype(np.float32),
-        feature_names=np.array(FRAME_FEATURE_NAMES, dtype=object),
+        feature_names=np.asarray(FRAME_FEATURE_NAMES, dtype=np.str_),
     )
 
 
 def load_gate_student(path: str) -> DistilledLinearStudent:
-    payload = np.load(path, allow_pickle=True)
-    student = DistilledLinearStudent(int(payload["w"].shape[0]))
-    student.w = payload["w"].astype(np.float32)
-    student.b = float(payload["b"][0])
+    payload = np.load(path, allow_pickle=False)
+    hidden = int(payload["hidden"][0]) if "hidden" in payload else int(payload["W1"].shape[1])
+    student = DistilledLinearStudent(int(payload["W1"].shape[0]), hidden=hidden, seed=0)
+    student.W1 = payload["W1"].astype(np.float32)
+    student.b1 = payload["b1"].astype(np.float32)
+    student.W2 = payload["W2"].astype(np.float32)
+    student.b2 = payload["b2"].astype(np.float32)
     student.norm_mu = payload["mu"].astype(np.float32)
     student.norm_sigma = payload["sigma"].astype(np.float32)
     return student
@@ -1649,7 +1738,7 @@ def train_frame_gate(rows: List[Tuple[np.ndarray, int]], cfg: CalibrationConfig,
     teacher = TinyTeacherMLP(d_in=Xn.shape[1], hidden=max(24, int(cfg.teacher_hidden) // 2), seed=int(seed + 23))
     teacher.fit(Xn, y, w, epochs=max(10, int(cfg.teacher_epochs) // 2), batch_size=int(cfg.batch_size), lr=float(cfg.teacher_lr), seed=int(seed + 29))
     soft = _sigmoid(teacher.logits(Xn) / float(cfg.temperature)).astype(np.float32)
-    student = DistilledLinearStudent(d_in=Xn.shape[1])
+    student = DistilledLinearStudent(d_in=Xn.shape[1], hidden=max(16, int(cfg.student_hidden)//2), seed=int(seed + 27))
     student.fit(
         Xn,
         soft,
@@ -1683,6 +1772,7 @@ def frame_gate_prob(student: Optional[DistilledLinearStudent], frame_feat: np.nd
     return float(student.prob(xn)[0])
 
 
+
 def _bit_search_base_score(
     code_cfg: CodeConfig,
     llr_final: np.ndarray,
@@ -1690,12 +1780,15 @@ def _bit_search_base_score(
     feat: np.ndarray,
     cfg: HybridConfig,
 ) -> np.ndarray:
+    del llr_final
     score = (
-        ai_prob_vec
+        0.95 * ai_prob_vec
+        + 0.26 * feat[:, FEATURE_INDEX["raw_final_disagree"]]
+        + 0.12 * feat[:, FEATURE_INDEX["raw_sign_conflict"]]
+        + 0.18 * feat[:, FEATURE_INDEX["raw_inv_abs_llr"]]
         + float(cfg.gain_weight) * feat[:, FEATURE_INDEX["gain_norm"]]
         + float(cfg.osc_weight) * feat[:, FEATURE_INDEX["flip_rate"]]
-        + 0.28 * feat[:, FEATURE_INDEX["inv_abs_llr"]]
-        + 0.08 * feat[:, FEATURE_INDEX["hard_one"]]
+        + 0.16 * feat[:, FEATURE_INDEX["weighted_unsat"]]
         + float(cfg.tx_bonus) * feat[:, FEATURE_INDEX["is_tx"]]
         + float(cfg.info_bonus) * feat[:, FEATURE_INDEX["is_tx_info"]]
         + float(cfg.punctured_info_bonus) * feat[:, FEATURE_INDEX["is_punctured_info"]]
@@ -2226,13 +2319,14 @@ def load_pattern_stats(path: str) -> Dict[str, Any]:
     return out
 
 
+
 def _prob_clip_bounds() -> Tuple[float, float]:
-    pmin = float(os.getenv("GRAND_PROB_MIN", "1.0e-4"))
-    pmax = float(os.getenv("GRAND_PROB_MAX", "0.49"))
-    pmin = min(max(pmin, 1.0e-6), 0.10)
-    pmax = min(max(pmax, 0.05), 0.499999)
+    pmin = float(os.getenv("GRAND_PROB_MIN", "1.0e-5"))
+    pmax = float(os.getenv("GRAND_PROB_MAX", "0.90"))
+    pmin = min(max(pmin, 1.0e-7), 0.20)
+    pmax = min(max(pmax, 0.10), 0.995)
     if pmax <= pmin:
-        pmax = min(0.49, pmin + 0.10)
+        pmax = min(0.99, pmin + 0.20)
     return float(pmin), float(pmax)
 
 
@@ -2319,71 +2413,6 @@ def _rank_domain_bits(
     return ranked[: int(limit_total)]
 
 
-def _ai_posterior_prob(
-    code_cfg: CodeConfig,
-    llr_final: np.ndarray,
-    feat: np.ndarray,
-    bit_prob_vec: np.ndarray,
-    block_student: Optional[DistilledLinearStudent],
-    hard_final: np.ndarray,
-    cfg: HybridConfig,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    blk_feat, blk_prob_vec, blk_score = _current_block_scores(code_cfg, feat, llr_final, hard_final, bit_prob_vec, cfg, block_student)
-    del blk_feat
-    valid = ~code_cfg._filler_mask.astype(bool)
-    bit_prob_vec = np.clip(np.asarray(bit_prob_vec, dtype=np.float32), 1.0e-6, 1.0 - 1.0e-6)
-    bit_logit = _safe_logit_prob(bit_prob_vec)
-    if blk_prob_vec.size > 0:
-        blk_per_bit = np.clip(blk_prob_vec[np.asarray(code_cfg._block_ids, dtype=np.int32)], 1.0e-6, 1.0 - 1.0e-6)
-        blk_logit = _safe_logit_prob(blk_per_bit)
-    else:
-        blk_per_bit = np.zeros(code_cfg.N, dtype=np.float32)
-        blk_logit = np.zeros(code_cfg.N, dtype=np.float32)
-    abs_llr = np.abs(llr_final).astype(np.float32)
-    mean_abs = float(np.mean(abs_llr[valid])) if np.any(valid) else 1.0
-    mean_abs = max(mean_abs, 1.0e-6)
-    logit = (
-        0.92 * bit_logit
-        + 0.34 * blk_logit
-        + 0.26 * feat[:, FEATURE_INDEX["weighted_unsat"]]
-        + 0.18 * feat[:, FEATURE_INDEX["flip_rate"]]
-        + 0.10 * feat[:, FEATURE_INDEX["gain_norm"]]
-        + 0.12 * feat[:, FEATURE_INDEX["local_weak_frac"]]
-        + 0.08 * feat[:, FEATURE_INDEX["cycle4_norm"]]
-        + 0.06 * feat[:, FEATURE_INDEX["twohop_norm"]]
-        - 0.12 * (abs_llr / mean_abs)
-        + 0.48 * float(cfg.info_bonus) * feat[:, FEATURE_INDEX["is_tx_info"]]
-        + 0.42 * float(cfg.punctured_info_bonus) * feat[:, FEATURE_INDEX["is_punctured_info"]]
-        - 0.36 * float(cfg.parity_penalty) * feat[:, FEATURE_INDEX["is_tx_parity"]]
-        - 0.10 * feat[:, FEATURE_INDEX["is_latent"]]
-    ).astype(np.float32)
-    pmin, pmax = _prob_clip_bounds()
-    prob = _sigmoid(logit).astype(np.float32)
-    prob = np.clip(prob, pmin, pmax).astype(np.float32)
-    prob[~valid] = pmin
-    search_score = _search_score_all_bits(code_cfg, llr_final, feat, prob, blk_prob_vec, cfg)
-    return prob.astype(np.float32), search_score.astype(np.float32), blk_score.astype(np.float32)
-
-
-def _ordered_candidate_pool(
-    code_cfg: CodeConfig,
-    llr_final: np.ndarray,
-    search_score: np.ndarray,
-    cfg: HybridConfig,
-) -> List[int]:
-    total_pool = int(max(int(cfg.single_pool), int(cfg.tx_info_pool) + int(cfg.punctured_info_pool) + int(cfg.tx_parity_pool)))
-    pool = _rank_domain_bits(
-        code_cfg,
-        llr_final,
-        search_score,
-        int(cfg.tx_info_pool),
-        int(cfg.punctured_info_pool),
-        int(cfg.tx_parity_pool),
-        int(total_pool),
-    )
-    if len(pool) > total_pool:
-        pool = pool[:total_pool]
-    return [int(v) for v in pool]
 
 
 def _syndrome_array_to_int(syndrome_bits: np.ndarray) -> int:
@@ -2414,9 +2443,416 @@ def _ensure_bit_check_mask_int(code_cfg: CodeConfig) -> None:
     code_cfg._bit_check_mask_int = masks
 
 
+def _channel_flip_delta(llr_raw: np.ndarray, hard_final: np.ndarray) -> np.ndarray:
+    return ((1.0 - 2.0 * hard_final.astype(np.float32)) * llr_raw.astype(np.float32)).astype(np.float32)
+
+
+def _channel_codeword_metric(bits: np.ndarray, llr_raw: np.ndarray) -> float:
+    return float(np.dot(bits.astype(np.float32), llr_raw.astype(np.float32)))
+
+
+def _ensure_bit_py_masks(code_cfg: CodeConfig) -> None:
+    if hasattr(code_cfg, "_bit_py_masks"):
+        return
+    code_cfg._bit_py_masks = [int(1) << int(v) for v in range(code_cfg.N)]
+
+
+def _ai_posterior_prob(
+    code_cfg: CodeConfig,
+    llr_raw: np.ndarray,
+    llr_final: np.ndarray,
+    feat: np.ndarray,
+    bit_prob_vec: np.ndarray,
+    block_student: Optional[DistilledLinearStudent],
+    hard_final: np.ndarray,
+    cfg: HybridConfig,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    _, blk_prob_vec, blk_score = _current_block_scores(code_cfg, feat, llr_raw, hard_final, bit_prob_vec, cfg, block_student)
+    valid = ~code_cfg._filler_mask.astype(bool)
+    bit_prob_vec = np.clip(np.asarray(bit_prob_vec, dtype=np.float32), 1.0e-6, 1.0 - 1.0e-6)
+    bit_logit = _safe_logit_prob(bit_prob_vec)
+    if blk_prob_vec.size > 0:
+        blk_per_bit = np.clip(blk_prob_vec[np.asarray(code_cfg._block_ids, dtype=np.int32)], 1.0e-6, 1.0 - 1.0e-6)
+        blk_logit = _safe_logit_prob(blk_per_bit)
+    else:
+        blk_per_bit = np.zeros(code_cfg.N, dtype=np.float32)
+        blk_logit = np.zeros(code_cfg.N, dtype=np.float32)
+
+    raw_abs = np.abs(llr_raw).astype(np.float32)
+    post_abs = np.abs(llr_final).astype(np.float32)
+    raw_mean = float(np.mean(raw_abs[valid])) if np.any(valid) else 1.0
+    post_mean = float(np.mean(post_abs[valid])) if np.any(valid) else 1.0
+    raw_mean = max(raw_mean, 1.0e-6)
+    post_mean = max(post_mean, 1.0e-6)
+
+    raw_inv = 1.0 / (1.0 + raw_abs / raw_mean)
+    post_inv = 1.0 / (1.0 + post_abs / post_mean)
+    raw_disagree = feat[:, FEATURE_INDEX["raw_final_disagree"]]
+    raw_gap = feat[:, FEATURE_INDEX["raw_post_gap_norm"]]
+    raw_conf = feat[:, FEATURE_INDEX["raw_sign_conflict"]]
+
+    logit = (
+        0.88 * bit_logit
+        + 0.36 * blk_logit
+        + 0.56 * raw_disagree
+        + 0.24 * raw_conf
+        + 0.22 * raw_inv
+        + 0.16 * feat[:, FEATURE_INDEX["weighted_unsat"]]
+        + 0.12 * feat[:, FEATURE_INDEX["flip_rate"]]
+        + 0.10 * feat[:, FEATURE_INDEX["gain_norm"]]
+        + 0.06 * raw_gap
+        - 0.08 * post_inv
+        + 0.42 * float(cfg.info_bonus) * feat[:, FEATURE_INDEX["is_tx_info"]]
+        + 0.34 * float(cfg.punctured_info_bonus) * feat[:, FEATURE_INDEX["is_punctured_info"]]
+        - 0.24 * float(cfg.parity_penalty) * feat[:, FEATURE_INDEX["is_tx_parity"]]
+        - 0.08 * feat[:, FEATURE_INDEX["is_latent"]]
+    ).astype(np.float32)
+
+    pmin, pmax = _prob_clip_bounds()
+    prob = _sigmoid(logit).astype(np.float32)
+    prob = np.clip(prob, pmin, pmax).astype(np.float32)
+    prob[~valid] = pmin
+
+    flip_delta = _channel_flip_delta(llr_raw, hard_final)
+    flip_gain = np.maximum(-flip_delta, 0.0).astype(np.float32) / raw_mean
+    search_score = (
+        prob
+        + 0.42 * flip_gain
+        + 0.22 * raw_disagree
+        + 0.10 * raw_conf
+        + 0.12 * feat[:, FEATURE_INDEX["weighted_unsat"]]
+        + 0.10 * feat[:, FEATURE_INDEX["flip_rate"]]
+        + 0.08 * feat[:, FEATURE_INDEX["gain_norm"]]
+        + 0.08 * blk_per_bit
+        + 0.18 * float(cfg.info_bonus) * feat[:, FEATURE_INDEX["is_tx_info"]]
+        + 0.12 * float(cfg.punctured_info_bonus) * feat[:, FEATURE_INDEX["is_punctured_info"]]
+        - 0.10 * float(cfg.parity_penalty) * feat[:, FEATURE_INDEX["is_tx_parity"]]
+    ).astype(np.float32)
+    search_score[~valid] = -1.0e9
+    return prob.astype(np.float32), search_score.astype(np.float32), blk_score.astype(np.float32), flip_delta.astype(np.float32), flip_gain.astype(np.float32)
+
+
+def _make_token(
+    name: str,
+    bits: List[int],
+    blocks: List[int],
+    code_cfg: CodeConfig,
+    prob_vec: np.ndarray,
+    search_score: np.ndarray,
+    flip_delta: np.ndarray,
+    blk_score: np.ndarray,
+    pattern_stats: Dict[str, Any],
+    raw_mean_abs: float,
+    base_synd: int,
+) -> Optional[Dict[str, Any]]:
+    if not bits:
+        return None
+    uniq = sorted(set(int(v) for v in bits))
+    if not uniq:
+        return None
+    bit_mask = 0
+    synd_mask = 0
+    for v in uniq:
+        bit_mask |= int(code_cfg._bit_py_masks[int(v)])
+        synd_mask ^= int(code_cfg._bit_check_mask_int[int(v)])
+    idx = np.asarray(uniq, dtype=np.int32)
+    size = int(idx.size)
+    if size <= 0:
+        return None
+
+    info_count = int(np.sum(code_cfg._tx_info_mask[idx]))
+    punctured_info_count = int(np.sum(code_cfg._punctured_info_mask[idx]))
+    parity_count = int(np.sum(code_cfg._tx_parity_mask[idx]))
+    tx_count = int(np.sum(code_cfg._tx_mask[idx]))
+    prob_clip = np.clip(prob_vec[idx].astype(np.float64), 1.0e-6, 1.0 - 1.0e-6)
+    posterior_cost = float(np.sum(np.log((1.0 - prob_clip) / prob_clip)))
+    prob_mean = float(np.mean(prob_clip))
+    score_pos = np.maximum(search_score[idx].astype(np.float64), 0.0)
+    score_mean = float(np.mean(score_pos)) if score_pos.size > 0 else 0.0
+    score_max = float(np.max(score_pos)) if score_pos.size > 0 else 0.0
+    delta_gain = float(np.mean(np.maximum(-flip_delta[idx].astype(np.float64), 0.0) / max(raw_mean_abs, 1.0e-6)))
+
+    size_choices = np.asarray(pattern_stats.get("size_choices", np.asarray([2, 4, 8, 12, 16, 24, 32], dtype=np.int32)), dtype=np.int32)
+    size_prior = np.asarray(pattern_stats.get("size_prior", np.ones((size_choices.size,), dtype=np.float32)), dtype=np.float32)
+    if size_choices.size == 0 or size_prior.size == 0:
+        size_penalty = 0.0
+    else:
+        sidx = _nearest_anchor_idx(size, size_choices)
+        p = float(size_prior[int(sidx)]) if int(sidx) < size_prior.size else float(np.mean(size_prior))
+        p = max(p, 1.0e-6)
+        size_penalty = -math.log(p)
+
+    block_bonus = 0.0
+    if blocks and blk_score.size > 0:
+        block_bonus = float(np.mean(blk_score[np.asarray(blocks, dtype=np.int32)]))
+
+    pair_bonus = 0.0
+    pair_pmi = np.asarray(pattern_stats.get("pair_pmi", np.zeros((0, 0), dtype=np.float32)), dtype=np.float32)
+    if len(blocks) >= 2 and pair_pmi.ndim == 2 and pair_pmi.size > 0:
+        vals = []
+        for i in range(len(blocks)):
+            for j in range(i + 1, len(blocks)):
+                bi = int(blocks[i]); bj = int(blocks[j])
+                if bi < pair_pmi.shape[0] and bj < pair_pmi.shape[1]:
+                    vals.append(float(pair_pmi[bi, bj]))
+        if vals:
+            pair_bonus = float(np.mean(vals))
+
+    base_pop = max(1, _popcount_int(base_synd))
+    synd_after = int(base_synd ^ int(synd_mask))
+    synd_gain = float((base_pop - _popcount_int(synd_after)) / base_pop)
+
+    cost = float(
+        posterior_cost
+        + 0.12 * size_penalty
+        - 0.80 * score_mean * float(size)
+        - 0.30 * score_max
+        - 0.55 * delta_gain * float(size)
+        - 0.50 * block_bonus * float(size)
+        - 0.24 * pair_bonus * float(size)
+        - 0.65 * synd_gain * float(size)
+        - 0.28 * float(info_count)
+        - 0.12 * float(punctured_info_count)
+        + 0.06 * float(parity_count)
+    )
+
+    return {
+        "name": str(name),
+        "bits": tuple(int(v) for v in uniq),
+        "mask_bits": int(bit_mask),
+        "synd_mask": int(synd_mask),
+        "weight": int(size),
+        "cost": float(cost),
+        "base_cost": float(posterior_cost),
+        "prob_mean": float(prob_mean),
+        "score_mean": float(score_mean),
+        "score_max": float(score_max),
+        "delta_gain": float(delta_gain),
+        "synd_gain": float(synd_gain),
+        "blocks": tuple(int(b) for b in sorted(set(int(x) for x in blocks))),
+        "tx_count": int(tx_count),
+        "info_count": int(info_count),
+        "punctured_info_count": int(punctured_info_count),
+        "parity_count": int(parity_count),
+    }
+
+
+def _build_token_catalog(
+    code_cfg: CodeConfig,
+    llr_raw: np.ndarray,
+    hard_final: np.ndarray,
+    prob_vec: np.ndarray,
+    search_score: np.ndarray,
+    blk_score: np.ndarray,
+    flip_delta: np.ndarray,
+    pattern_stats: Dict[str, Any],
+    cfg: HybridConfig,
+    base_synd: int,
+) -> Tuple[List[Dict[str, Any]], int]:
+    del hard_final
+    valid = ~code_cfg._filler_mask.astype(bool)
+    raw_mean_abs = float(np.mean(np.abs(llr_raw[valid]))) if np.any(valid) else 1.0
+    raw_mean_abs = max(raw_mean_abs, 1.0e-6)
+
+    single_pool = _rank_domain_bits(
+        code_cfg,
+        llr_raw,
+        search_score,
+        int(cfg.tx_info_pool),
+        int(cfg.punctured_info_pool),
+        int(cfg.tx_parity_pool),
+        int(max(cfg.single_pool, cfg.tx_info_pool + cfg.punctured_info_pool + cfg.tx_parity_pool)),
+    )
+    single_pool = [int(v) for v in single_pool[: int(max(1, cfg.single_pool))]]
+
+    blocks_ranked: List[int] = []
+    B = int(getattr(code_cfg, "_num_blocks", 0))
+    if B > 0:
+        block_mass = np.zeros((B,), dtype=np.float32)
+        block_active = np.asarray(pattern_stats.get("block_active", np.zeros((B,), dtype=np.float32)), dtype=np.float32)
+        if block_active.size < B:
+            tmp = np.zeros((B,), dtype=np.float32)
+            tmp[: block_active.size] = block_active
+            block_active = tmp
+        for b in range(B):
+            idx = np.flatnonzero((code_cfg._block_ids == b) & valid)
+            if idx.size == 0:
+                continue
+            block_mass[b] = float(np.mean(np.maximum(search_score[idx], 0.0)))
+        combo = block_mass + 0.45 * block_active
+        if blk_score.size == B:
+            combo += blk_score.astype(np.float32)
+        order = np.argsort(-combo)
+        blocks_ranked = [int(b) for b in order[: int(min(max(1, cfg.top_blocks), order.size))].tolist()]
+
+    local_cache: Dict[int, List[int]] = {}
+    for b in blocks_ranked:
+        idx = np.flatnonzero((code_cfg._block_ids == int(b)) & valid)
+        if idx.size == 0:
+            local_cache[int(b)] = []
+            continue
+        order = sorted(
+            idx.tolist(),
+            key=lambda v: (
+                float(flip_delta[int(v)]),
+                -float(search_score[int(v)]),
+                float(np.abs(llr_raw[int(v)])),
+                int(v),
+            ),
+        )
+        local_cache[int(b)] = [int(v) for v in order]
+
+    size_choices = np.asarray(pattern_stats.get("size_choices", np.asarray(cfg.block_prefix_sizes, dtype=np.int32)), dtype=np.int32)
+    if size_choices.size == 0:
+        size_choices = np.asarray([4, 8, 12, 16, 24, 32], dtype=np.int32)
+
+    tokens_by_mask: Dict[int, Dict[str, Any]] = {}
+    token_pool_bits = set()
+
+    for v in single_pool:
+        tok = _make_token(f"single_{v}", [int(v)], [int(code_cfg._block_ids[int(v)])], code_cfg, prob_vec, search_score, flip_delta, blk_score, pattern_stats, raw_mean_abs, base_synd)
+        if tok is not None:
+            token_pool_bits.update(tok["bits"])
+            prev = tokens_by_mask.get(tok["mask_bits"])
+            if prev is None or tok["cost"] < prev["cost"]:
+                tokens_by_mask[tok["mask_bits"]] = tok
+
+    for b in blocks_ranked:
+        order = local_cache.get(int(b), [])
+        if not order:
+            continue
+        n = len(order)
+        keep_sizes = sorted(set(int(s) for s in size_choices.tolist() if 0 < int(s) <= n))
+        if blk_score.size > int(b):
+            pred = max(1, min(n, int(round(min(0.95, max(0.10, float(blk_score[int(b)]) * 0.45)) * n))))
+            keep_sizes.append(int(size_choices[_nearest_anchor_idx(pred, size_choices)]))
+        keep_sizes = sorted(set(int(s) for s in keep_sizes if 0 < int(s) <= n))
+        for s in keep_sizes:
+            tok = _make_token(f"blk{b}_p{s}", order[: int(s)], [int(b)], code_cfg, prob_vec, search_score, flip_delta, blk_score, pattern_stats, raw_mean_abs, base_synd)
+            if tok is not None:
+                token_pool_bits.update(tok["bits"])
+                prev = tokens_by_mask.get(tok["mask_bits"])
+                if prev is None or tok["cost"] < prev["cost"]:
+                    tokens_by_mask[tok["mask_bits"]] = tok
+
+    pair_pmi = np.asarray(pattern_stats.get("pair_pmi", np.zeros((0, 0), dtype=np.float32)), dtype=np.float32)
+    pair_candidates: List[Tuple[float, int, int]] = []
+    for i in range(len(blocks_ranked)):
+        bi = int(blocks_ranked[i])
+        for j in range(i + 1, len(blocks_ranked)):
+            bj = int(blocks_ranked[j])
+            score = 0.0
+            if blk_score.size > bi:
+                score += float(blk_score[bi])
+            if blk_score.size > bj:
+                score += float(blk_score[bj])
+            if pair_pmi.ndim == 2 and bi < pair_pmi.shape[0] and bj < pair_pmi.shape[1]:
+                score += 0.60 * float(pair_pmi[bi, bj])
+            pair_candidates.append((score, bi, bj))
+    pair_candidates.sort(key=lambda t: (-float(t[0]), int(t[1]), int(t[2])))
+    for _, bi, bj in pair_candidates[: int(max(0, cfg.pair_top_blocks))]:
+        order_i = local_cache.get(int(bi), [])
+        order_j = local_cache.get(int(bj), [])
+        if not order_i or not order_j:
+            continue
+        ni = len(order_i)
+        nj = len(order_j)
+        if blk_score.size > bi:
+            pred_i = max(1, min(ni, int(round(min(0.95, max(0.10, float(blk_score[bi]) * 0.45)) * ni))))
+        else:
+            pred_i = max(1, min(ni, ni // 4))
+        if blk_score.size > bj:
+            pred_j = max(1, min(nj, int(round(min(0.95, max(0.10, float(blk_score[bj]) * 0.45)) * nj))))
+        else:
+            pred_j = max(1, min(nj, nj // 4))
+        si = max(1, min(ni, int(size_choices[_nearest_anchor_idx(pred_i, size_choices)])))
+        sj = max(1, min(nj, int(size_choices[_nearest_anchor_idx(pred_j, size_choices)])))
+        tok = _make_token(f"pair_{bi}_{bj}", order_i[:si] + order_j[:sj], [int(bi), int(bj)], code_cfg, prob_vec, search_score, flip_delta, blk_score, pattern_stats, raw_mean_abs, base_synd)
+        if tok is not None:
+            token_pool_bits.update(tok["bits"])
+            prev = tokens_by_mask.get(tok["mask_bits"])
+            if prev is None or tok["cost"] < prev["cost"]:
+                tokens_by_mask[tok["mask_bits"]] = tok
+
+    tokens = sorted(tokens_by_mask.values(), key=lambda t: (float(t["cost"]), -float(t.get("synd_gain", 0.0)), int(t["weight"]), t["name"]))
+    max_tokens_keep = int(max(96, min(320, getattr(cfg, "queue_cap", 65536) // 48)))
+    if len(tokens) > max_tokens_keep:
+        tokens = tokens[:max_tokens_keep]
+        token_pool_bits = set()
+        for tok in tokens:
+            token_pool_bits.update(tok["bits"])
+    return tokens, int(len(token_pool_bits))
+
+
+class _BoundedOpenList:
+    def __init__(self, cap: int):
+        self.cap = int(max(1, cap))
+        self.min_heap: List[Tuple[Tuple[float, int, int, int, int], int]] = []
+        self.max_heap: List[Tuple[Tuple[float, int, int, int, int], int]] = []
+        self.records: Dict[int, Optional[Tuple[Tuple[float, int, int, int, int], Any]]] = {}
+        self.next_id = 0
+        self.size = 0
+        self.max_seen = 0
+        self.dropped = 0
+
+    @staticmethod
+    def _rev_key(key: Tuple[float, int, int, int, int]) -> Tuple[float, int, int, int, int]:
+        return (-float(key[0]), -int(key[1]), -int(key[2]), -int(key[3]), -int(key[4]))
+
+    def _clean_min(self) -> None:
+        while self.min_heap and self.records.get(self.min_heap[0][1]) is None:
+            heapq.heappop(self.min_heap)
+
+    def _clean_max(self) -> None:
+        while self.max_heap and self.records.get(self.max_heap[0][1]) is None:
+            heapq.heappop(self.max_heap)
+
+    def push(self, key: Tuple[float, int, int, int, int], payload: Any) -> bool:
+        key = (float(key[0]), int(key[1]), int(key[2]), int(key[3]), int(key[4]))
+        if self.size >= self.cap:
+            self._clean_max()
+            if self.max_heap:
+                worst_sid = int(self.max_heap[0][1])
+                worst = self.records.get(worst_sid)
+                if worst is not None and key >= worst[0]:
+                    self.dropped += 1
+                    return False
+                heapq.heappop(self.max_heap)
+                if worst is not None:
+                    self.records[worst_sid] = None
+                    self.size -= 1
+            else:
+                self.dropped += 1
+                return False
+        sid = int(self.next_id)
+        self.next_id += 1
+        self.records[sid] = (key, payload)
+        heapq.heappush(self.min_heap, (key, sid))
+        heapq.heappush(self.max_heap, (self._rev_key(key), sid))
+        self.size += 1
+        if self.size > self.max_seen:
+            self.max_seen = int(self.size)
+        return True
+
+    def pop(self) -> Tuple[Tuple[float, int, int, int, int], Any]:
+        self._clean_min()
+        if not self.min_heap:
+            raise IndexError('pop from empty open list')
+        _, sid = heapq.heappop(self.min_heap)
+        rec = self.records.pop(int(sid), None)
+        if rec is None:
+            return self.pop()
+        self.size -= 1
+        return rec
+
+    def __len__(self) -> int:
+        return int(self.size)
+
+
 def ordered_pattern_grand(
     code_cfg: CodeConfig,
     hard_final: np.ndarray,
+    llr_raw: np.ndarray,
     llr_final: np.ndarray,
     syndrome_final: np.ndarray,
     feat: np.ndarray,
@@ -2425,7 +2861,6 @@ def ordered_pattern_grand(
     block_student: Optional[DistilledLinearStudent],
     pattern_stats: Dict[str, Any],
 ) -> Dict[str, Any]:
-    del pattern_stats
     base_synd = _syndrome_array_to_int(syndrome_final)
     if base_synd == 0:
         return {
@@ -2435,17 +2870,26 @@ def ordered_pattern_grand(
             "patterns_tested": 0,
             "atoms_total": 0,
             "queue_max": 0,
+            "queue_dropped": 0,
             "zero_synd_candidates": 1,
             "support_weight": 0,
             "atom_count": 0,
             "candidate_pool": 0,
             "predicted_error_mass": 0.0,
+            "first_success_cost": 0.0,
+            "block_score_peak": 0.0,
         }
 
     _ensure_bit_check_mask_int(code_cfg)
-    prob_vec, search_score, blk_score = _ai_posterior_prob(code_cfg, llr_final, feat, bit_prob_vec, block_student, hard_final, cfg)
-    pool = _ordered_candidate_pool(code_cfg, llr_final, search_score, cfg)
-    if not pool:
+    _ensure_bit_py_masks(code_cfg)
+
+    prob_vec, search_score, blk_score, flip_delta, _ = _ai_posterior_prob(
+        code_cfg, llr_raw, llr_final, feat, bit_prob_vec, block_student, hard_final, cfg
+    )
+    tokens, bit_pool_size = _build_token_catalog(
+        code_cfg, llr_raw, hard_final, prob_vec, search_score, blk_score, flip_delta, pattern_stats, cfg, base_synd
+    )
+    if not tokens:
         return {
             "success": False,
             "bits": hard_final,
@@ -2453,106 +2897,121 @@ def ordered_pattern_grand(
             "patterns_tested": 0,
             "atoms_total": 0,
             "queue_max": 0,
+            "queue_dropped": 0,
             "zero_synd_candidates": 0,
             "support_weight": 0,
             "atom_count": 0,
             "candidate_pool": 0,
-            "predicted_error_mass": 0.0,
+            "predicted_error_mass": float(np.sum(prob_vec)),
+            "first_success_cost": 0.0,
+            "block_score_peak": float(np.max(blk_score)) if blk_score.size > 0 else 0.0,
         }
 
-    p_pool = prob_vec[np.asarray(pool, dtype=np.int32)].astype(np.float32)
-    costs = np.log((1.0 - p_pool) / p_pool).astype(np.float32)
-    order = sorted(range(len(pool)), key=lambda i: (float(costs[i]), -float(search_score[pool[i]]), float(np.abs(llr_final[pool[i]])), int(pool[i])))
-    bits_sorted = [int(pool[i]) for i in order]
-    cost_sorted = np.asarray([float(costs[i]) for i in order], dtype=np.float32)
-    prob_sorted = np.asarray([float(p_pool[i]) for i in order], dtype=np.float32)
-    col_masks = [int(code_cfg._bit_check_mask_int[int(v)]) for v in bits_sorted]
+    queue_cap = int(max(256, cfg.queue_cap))
+    open_list = _BoundedOpenList(queue_cap)
+    best_mask_cost: Dict[int, float] = {}
+    init_take = int(min(len(tokens), max(24, cfg.block_beam_width)))
+    for i in range(init_take):
+        tok = tokens[i]
+        mask_bits = int(tok["mask_bits"])
+        synd_mask = int(base_synd ^ int(tok["synd_mask"]))
+        key = (
+            float(tok["cost"]),
+            _popcount_int(synd_mask),
+            1,
+            int(tok["weight"]),
+            int(i),
+        )
+        if open_list.push(key, (int(i), int(synd_mask), int(mask_bits), (int(i),))):
+            best_mask_cost[int(mask_bits)] = float(tok["cost"])
 
-    L = len(bits_sorted)
-    if L <= 0:
-        return {
-            "success": False,
-            "bits": hard_final,
-            "pattern": tuple(),
-            "patterns_tested": 0,
-            "atoms_total": 0,
-            "queue_max": 0,
-            "zero_synd_candidates": 0,
-            "support_weight": 0,
-            "atom_count": 0,
-            "candidate_pool": 0,
-            "predicted_error_mass": 0.0,
-        }
-
-    heap: List[Tuple[float, int, int, Tuple[int, ...], int]] = []
-    root_support = (0,)
-    root_synd = int(base_synd ^ col_masks[0])
-    heapq.heappush(heap, (float(cost_sorted[0]), _popcount_int(root_synd), 1, root_support, root_synd))
-    queue_max = 1
     patterns_tested = 0
     zero_synd_candidates = 0
-    max_support = int(max(1, cfg.max_support_bits))
     max_patterns = int(max(1, cfg.max_patterns))
+    max_tokens_per_pattern = int(max(1, cfg.max_atoms_per_pattern))
+    max_support_bits = int(max(1, cfg.max_support_bits))
+    expand_top_k = int(max(8, cfg.expand_top_k))
 
-    while heap and patterns_tested < max_patterns:
-        cost, _, _, support, synd_mask = heapq.heappop(heap)
+    while len(open_list) > 0 and patterns_tested < max_patterns:
+        key, payload = open_list.pop()
+        cost, _, atom_count, support_weight, last_idx = key
+        last_idx_payload, synd_mask, mask_bits, tok_ids = payload
+        last_idx = int(last_idx_payload)
         patterns_tested += 1
-        if synd_mask == 0:
+
+        if int(synd_mask) == 0:
             zero_synd_candidates += 1
+            flip_bits: List[int] = []
+            for tid in tok_ids:
+                flip_bits.extend(tokens[int(tid)]["bits"])
+            idx = np.asarray(sorted(set(int(v) for v in flip_bits)), dtype=np.int32) if flip_bits else np.zeros((0,), dtype=np.int32)
             final_bits = hard_final.copy()
-            flip_bits = [bits_sorted[idx] for idx in support]
-            if flip_bits:
-                final_bits[np.asarray(flip_bits, dtype=np.int32)] ^= 1
+            if idx.size > 0:
+                final_bits[idx] ^= 1
             return {
                 "success": True,
                 "bits": final_bits,
-                "pattern": tuple(int(v) for v in flip_bits),
+                "pattern": tuple(int(v) for v in idx.tolist()),
                 "patterns_tested": int(patterns_tested),
-                "atoms_total": int(L),
-                "queue_max": int(queue_max),
+                "atoms_total": int(len(tokens)),
+                "queue_max": int(open_list.max_seen),
+                "queue_dropped": int(open_list.dropped),
                 "zero_synd_candidates": int(zero_synd_candidates),
-                "support_weight": int(len(flip_bits)),
-                "atom_count": int(len(flip_bits)),
-                "candidate_pool": int(L),
-                "predicted_error_mass": float(np.sum(prob_sorted)),
+                "support_weight": int(idx.size),
+                "atom_count": int(atom_count),
+                "candidate_pool": int(bit_pool_size),
+                "predicted_error_mass": float(np.sum(prob_vec)),
                 "first_success_cost": float(cost),
                 "block_score_peak": float(np.max(blk_score)) if blk_score.size > 0 else 0.0,
             }
 
-        last = int(support[-1])
-        nxt = last + 1
-        if nxt >= L:
+        if int(atom_count) >= max_tokens_per_pattern or int(support_weight) >= max_support_bits:
             continue
 
-        # Child A: replace last candidate by the next one
-        if len(support) == 1 or nxt > int(support[-2]):
-            child_a = support[:-1] + (nxt,)
-            cost_a = float(cost - float(cost_sorted[last]) + float(cost_sorted[nxt]))
-            synd_a = int(synd_mask ^ col_masks[last] ^ col_masks[nxt])
-            heapq.heappush(heap, (cost_a, _popcount_int(synd_a), len(child_a), child_a, synd_a))
-
-        # Child B: append the next candidate
-        if len(support) < max_support:
-            child_b = support + (nxt,)
-            cost_b = float(cost + float(cost_sorted[nxt]))
-            synd_b = int(synd_mask ^ col_masks[nxt])
-            heapq.heappush(heap, (cost_b, _popcount_int(synd_b), len(child_b), child_b, synd_b))
-
-        if len(heap) > queue_max:
-            queue_max = len(heap)
+        added = 0
+        j = int(last_idx) + 1
+        while j < len(tokens) and added < expand_top_k:
+            tok = tokens[j]
+            tok_mask = int(tok["mask_bits"])
+            if int(mask_bits) & tok_mask:
+                j += 1
+                continue
+            new_support = int(support_weight) + int(tok["weight"])
+            if new_support > max_support_bits:
+                j += 1
+                continue
+            new_mask = int(mask_bits) | tok_mask
+            new_cost = float(cost) + float(tok["cost"])
+            prev_cost = best_mask_cost.get(new_mask, float("inf"))
+            if new_cost >= prev_cost - 1.0e-9:
+                j += 1
+                continue
+            new_synd = int(synd_mask) ^ int(tok["synd_mask"])
+            new_key = (
+                float(new_cost),
+                _popcount_int(new_synd),
+                int(atom_count) + 1,
+                int(new_support),
+                int(j),
+            )
+            if open_list.push(new_key, (int(j), int(new_synd), int(new_mask), tuple(list(tok_ids) + [int(j)]))):
+                best_mask_cost[new_mask] = float(new_cost)
+                added += 1
+            j += 1
 
     return {
         "success": False,
         "bits": hard_final,
         "pattern": tuple(),
         "patterns_tested": int(patterns_tested),
-        "atoms_total": int(L),
-        "queue_max": int(queue_max),
+        "atoms_total": int(len(tokens)),
+        "queue_max": int(open_list.max_seen),
+        "queue_dropped": int(open_list.dropped),
         "zero_synd_candidates": int(zero_synd_candidates),
         "support_weight": 0,
         "atom_count": 0,
-        "candidate_pool": int(L),
-        "predicted_error_mass": float(np.sum(prob_sorted)),
+        "candidate_pool": int(bit_pool_size),
+        "predicted_error_mass": float(np.sum(prob_vec)),
         "first_success_cost": 0.0,
         "block_score_peak": float(np.max(blk_score)) if blk_score.size > 0 else 0.0,
     }
@@ -2565,10 +3024,10 @@ def _warmup(code_cfg: CodeConfig, stage1_iters: int) -> None:
     dec_cfg = DecoderConfig(max_iters=int(stage1_iters), alpha=float(_env_float("LDPC_ALPHA", 0.80)), early_stop=True)
     snapshot_iters = _snapshot_iter_list(stage1_iters, 3)
     hard, llr_post, synd, _, snaps = ldpc_min_sum_decode(llr, code_cfg, dec_cfg, snapshot_iters=snapshot_iters)
-    feat = _feature_pack(code_cfg, llr_post, hard, synd, snaps, int(stage1_iters))
+    feat = _feature_pack(code_cfg, llr, llr_post, hard, synd, snaps, int(stage1_iters))
     heur_prob = student_prob(None, feat)
     stats = _default_pattern_stats(code_cfg, HybridConfig())
-    _ = ordered_pattern_grand(code_cfg, hard, llr_post, synd, feat, heur_prob, HybridConfig(), None, stats)
+    _ = ordered_pattern_grand(code_cfg, hard, llr, llr_post, synd, feat, heur_prob, HybridConfig(), None, stats)
 
 
 def run_calibration(
@@ -2601,16 +3060,16 @@ def run_calibration(
             hard, llr_post, synd, _, snaps = ldpc_min_sum_decode(llr, code_cfg, dec_cfg, snapshot_iters=snapshot_iters)
             total_frames += 1
             if int(np.sum(synd)) != 0:
-                feat = _feature_pack(code_cfg, llr_post, hard, synd, snaps, int(run_cfg.stage1_iters))
+                feat = _feature_pack(code_cfg, llr, llr_post, hard, synd, snaps, int(run_cfg.stage1_iters))
                 labels = hard.astype(np.float32).copy()
                 labels[code_cfg._filler_mask.astype(bool)] = 0.0
-                packed = _collect_training_rows(feat, labels, llr_post, synd, run_cfg.calib, seed + 7)
+                packed = _collect_training_rows(feat, labels, llr, synd, run_cfg.calib, seed + 7)
                 if packed is not None:
                     bit_rows.append(packed)
 
                 heur_prob = student_prob(None, feat)
-                base_score = _bit_search_base_score(code_cfg, llr_post, heur_prob, feat, run_cfg.hybrid)
-                blk_feat = _block_feature_pack(code_cfg, feat, llr_post, hard, base_score)
+                base_score = _bit_search_base_score(code_cfg, llr, heur_prob, feat, run_cfg.hybrid)
+                blk_feat = _block_feature_pack(code_cfg, feat, llr, hard, base_score)
                 if blk_feat.shape[0] > 0:
                     blk_labels = np.zeros((blk_feat.shape[0],), dtype=np.float32)
                     err_counts: List[Tuple[int, int]] = []
@@ -2722,6 +3181,7 @@ def evaluate_one_snr(
     patterns_tested_total = 0
     candidate_pool_total = 0
     queue_max_total = 0
+    queue_dropped_total = 0
     zero_synd_candidates_total = 0
     success_weight_total = 0
     success_atom_count_total = 0
@@ -2747,14 +3207,15 @@ def evaluate_one_snr(
         if int(np.sum(synd)) != 0:
             failed_frames += 1
             grand_invocations += 1
-            feat = _feature_pack(code_cfg, llr_post, hard, synd, snaps, int(run_cfg.stage1_iters))
+            feat = _feature_pack(code_cfg, llr, llr_post, hard, synd, snaps, int(run_cfg.stage1_iters))
             bit_prob = student_prob(bit_student, feat)
             t1 = time.perf_counter()
-            res = ordered_pattern_grand(code_cfg, hard, llr_post, synd, feat, bit_prob, run_cfg.hybrid, block_student_obj, pattern_stats)
+            res = ordered_pattern_grand(code_cfg, hard, llr, llr_post, synd, feat, bit_prob, run_cfg.hybrid, block_student_obj, pattern_stats)
             grand_time += time.perf_counter() - t1
             patterns_tested_total += int(res.get("patterns_tested", 0))
             candidate_pool_total += int(res.get("candidate_pool", res.get("atoms_total", 0)))
             queue_max_total += int(res.get("queue_max", 0))
+            queue_dropped_total += int(res.get("queue_dropped", 0))
             zero_synd_candidates_total += int(res.get("zero_synd_candidates", 0))
             predicted_error_mass_total += float(res.get("predicted_error_mass", 0.0))
             block_score_peak_total += float(res.get("block_score_peak", 0.0))
@@ -2801,6 +3262,7 @@ def evaluate_one_snr(
         "avg_candidate_pool_per_invoked": float(candidate_pool_total / grand_invocations) if grand_invocations > 0 else 0.0,
         "avg_atoms_total_per_invoked": float(candidate_pool_total / grand_invocations) if grand_invocations > 0 else 0.0,
         "avg_queue_max_per_invoked": float(queue_max_total / grand_invocations) if grand_invocations > 0 else 0.0,
+        "avg_queue_dropped_per_invoked": float(queue_dropped_total / grand_invocations) if grand_invocations > 0 else 0.0,
         "avg_zero_synd_candidates_per_invoked": float(zero_synd_candidates_total / grand_invocations) if grand_invocations > 0 else 0.0,
         "avg_predicted_error_mass_per_invoked": float(predicted_error_mass_total / grand_invocations) if grand_invocations > 0 else 0.0,
         "avg_block_score_peak_per_invoked": float(block_score_peak_total / grand_invocations) if grand_invocations > 0 else 0.0,
@@ -2831,6 +3293,22 @@ def save_summary_csv(rows: List[Dict[str, Any]], path: str) -> None:
             f.write(",".join(vals) + "\n")
 
 
+def _configure_runtime_threads(local_threads: int) -> None:
+    local_threads = int(max(1, local_threads))
+    os.environ["LDPC_GRAND_NUM_THREADS"] = str(local_threads)
+    if NUMBA_AVAILABLE and set_num_threads is not None:
+        try:
+            set_num_threads(local_threads)
+        except Exception:
+            pass
+
+
+def _eval_one_snr_worker(payload: Tuple[RunConfig, CodeConfig, float, Optional[DistilledLinearStudent], Optional[DistilledLinearStudent], Dict[str, Any], int]) -> Dict[str, Any]:
+    run_cfg, code_cfg, snr_db, bit_student, block_student_obj, pattern_stats, local_threads = payload
+    _configure_runtime_threads(int(local_threads))
+    return evaluate_one_snr(run_cfg, code_cfg, float(snr_db), bit_student, block_student_obj, pattern_stats)
+
+
 # ------------------------- Main -------------------------
 def build_run_config(results_dir: str) -> RunConfig:
     stage1_iters = _env_int("STAGE1_ITERS", 15)
@@ -2850,12 +3328,13 @@ def build_run_config(results_dir: str) -> RunConfig:
         max_frames=_env_int("CALIB_MAX_FRAMES", 260000),
         neg_ratio=_env_float("CALIB_NEG_RATIO", 6.0),
         hard_negative_cap=_env_int("CALIB_HARD_NEG_CAP", 128),
-        teacher_hidden=_env_int("AI_TEACHER_HIDDEN", 96),
-        teacher_epochs=_env_int("AI_TEACHER_EPOCHS", 28),
-        student_epochs=_env_int("AI_STUDENT_EPOCHS", 22),
+        teacher_hidden=_env_int("AI_TEACHER_HIDDEN", 160),
+        student_hidden=_env_int("AI_STUDENT_HIDDEN", 64),
+        teacher_epochs=_env_int("AI_TEACHER_EPOCHS", 40),
+        student_epochs=_env_int("AI_STUDENT_EPOCHS", 30),
         batch_size=_env_int("AI_BATCH_SIZE", 4096),
         teacher_lr=_env_float("AI_TEACHER_LR", 0.01),
-        student_lr=_env_float("AI_STUDENT_LR", 0.020),
+        student_lr=_env_float("AI_STUDENT_LR", 0.018),
         temperature=_env_float("AI_DISTILL_TEMP", 2.5),
         calib_tx_info_pool=_env_int("CALIB_TX_INFO_POOL", 56),
         calib_punctured_info_pool=_env_int("CALIB_PUNCTURED_INFO_POOL", 24),
@@ -2873,7 +3352,7 @@ def build_run_config(results_dir: str) -> RunConfig:
         round2_extra_parity=_env_int("GRAND_ROUND2_EXTRA_PARITY", 6),
         max_weight=_env_int("GRAND_MAX_WEIGHT", 160),
         free_dim_cap=_env_int("GRAND_FREE_DIM_CAP", 20),
-        max_patterns=_env_int("GRAND_MAX_PATTERNS", 200000),
+        max_patterns=_env_int("GRAND_MAX_PATTERNS", 50000),
         frame_gate_threshold=_env_float("GRAND_FRAME_GATE_THRESHOLD", 0.0),
         gate_max_synd=_env_int("GRAND_GATE_MAX_SYND", 999),
         gate_max_hard_ones=_env_int("GRAND_GATE_MAX_HARD_ONES", 999),
@@ -2889,7 +3368,7 @@ def build_run_config(results_dir: str) -> RunConfig:
         block_prob_weight=_env_float("GRAND_BLOCK_PROB_WEIGHT", 0.95),
         block_mass_weight=_env_float("GRAND_BLOCK_MASS_WEIGHT", 0.55),
         block_combo_max=_env_int("GRAND_BLOCK_COMBO_MAX", 3),
-        top_blocks=_env_int("GRAND_TOP_BLOCKS", 12),
+        top_blocks=_env_int("GRAND_TOP_BLOCKS", 16),
         block_beam_width=_env_int("GRAND_BLOCK_BEAM_WIDTH", 64),
         prefix_keep=_env_int("GRAND_PREFIX_KEEP", 8),
         block_refine_bits=_env_int("GRAND_BLOCK_REFINE_BITS", 16),
@@ -2906,9 +3385,9 @@ def build_run_config(results_dir: str) -> RunConfig:
         traj_best_scale=_env_float("GRAND_TRAJ_BEST_SCALE", 1.80),
         traj_second_scale=_env_float("GRAND_TRAJ_SECOND_SCALE", 1.25),
         single_pool=_env_int("GRAND_SINGLE_POOL", 96),
-        pair_top_blocks=_env_int("GRAND_PAIR_TOP_BLOCKS", 6),
-        queue_cap=_env_int("GRAND_QUEUE_CAP", 65536),
-        expand_top_k=_env_int("GRAND_EXPAND_TOP_K", 24),
+        pair_top_blocks=_env_int("GRAND_PAIR_TOP_BLOCKS", 8),
+        queue_cap=_env_int("GRAND_QUEUE_CAP", 16384),
+        expand_top_k=_env_int("GRAND_EXPAND_TOP_K", 16),
         max_atoms_per_pattern=_env_int("GRAND_MAX_ATOMS_PER_PATTERN", 4),
         max_support_bits=_env_int("GRAND_MAX_SUPPORT_BITS", 160),
         block_prefix_sizes=[int(round(x)) for x in _env_csv_floats("GRAND_BLOCK_PREFIX_SIZES", "2,4,8,12,16,24,32")],
@@ -2958,9 +3437,9 @@ def main():
     code_cfg = build_sionna_5g_nr_code_cfg(run_cfg.k_info, run_cfg.n_tx, run_cfg.qm)
     _warmup(code_cfg, run_cfg.stage1_iters)
 
-    bit_model_path = os.path.join(results_dir, f"aipog_bit_student_it{run_cfg.stage1_iters:02d}.npz")
-    block_model_path = os.path.join(results_dir, f"aipog_block_student_it{run_cfg.stage1_iters:02d}.npz")
-    pattern_stats_path = os.path.join(results_dir, f"aipog_pattern_stats_it{run_cfg.stage1_iters:02d}.npz")
+    bit_model_path = os.path.join(results_dir, f"ppog_bit_student_it{run_cfg.stage1_iters:02d}.npz")
+    block_model_path = os.path.join(results_dir, f"ppog_block_student_it{run_cfg.stage1_iters:02d}.npz")
+    pattern_stats_path = os.path.join(results_dir, f"ppog_pattern_stats_it{run_cfg.stage1_iters:02d}.npz")
 
     calib_meta = run_calibration(run_cfg, code_cfg, bit_model_path, block_model_path, pattern_stats_path)
     try:
@@ -2982,35 +3461,75 @@ def main():
     rows: List[Dict[str, Any]] = []
     print(f"[RUN] code={code_cfg.code_name} it={run_cfg.stage1_iters} eval_snr={run_cfg.eval_snr_db}")
     print(f"[RUN] calib={calib_meta}")
-    print(f"[RUN] aipog max_patterns={run_cfg.hybrid.max_patterns} pool={run_cfg.hybrid.single_pool} tx_info_pool={run_cfg.hybrid.tx_info_pool} punct_pool={run_cfg.hybrid.punctured_info_pool} tx_par_pool={run_cfg.hybrid.tx_parity_pool}")
+    print(f"[RUN] ppog max_patterns={run_cfg.hybrid.max_patterns} pool={run_cfg.hybrid.single_pool} tx_info_pool={run_cfg.hybrid.tx_info_pool} punct_pool={run_cfg.hybrid.punctured_info_pool} tx_par_pool={run_cfg.hybrid.tx_parity_pool}")
 
-    for snr_db in run_cfg.eval_snr_db:
-        res = evaluate_one_snr(run_cfg, code_cfg, float(snr_db), bit_student, block_student_obj, pattern_stats)
-        rows.append(res)
-        print("\n=== AIPOG HYBRID EVAL ===")
-        print(f"SNR (dB)                         : {res['snr_db']:.2f}")
-        print(f"Frames simulated                 : {res['frames']}")
-        print(f"LDPC FER / BER                   : {res['ldpc_fer']:.6e} / {res['ldpc_ber']:.6e}")
-        print(f"Hybrid FER / BER                 : {res['hyb_fer']:.6e} / {res['hyb_ber']:.6e}")
-        print(f"Avg stage-1 iters/frame          : {res['avg_stage1_iters']:.3f}")
-        print(f"Failed frame rate                : {res['failed_frame_rate']:.6f}")
-        print(f"GRAND invocation rate            : {res['grand_invocation_rate']:.6f}")
-        print(f"GRAND rescue rate | invoked      : {res['grand_rescue_rate_given_invoked']:.6f}")
-        print(f"Info rescue rate | invoked       : {res['grand_info_rescue_rate_given_invoked']:.6f}")
-        print(f"Parity-only rescue | invoked     : {res['grand_parity_only_rescue_rate_given_invoked']:.6f}")
-        print(f"Avg patterns tested | invoked    : {res['avg_patterns_tested_per_invoked']:.3f}")
-        print(f"Avg candidate pool | invoked     : {res['avg_candidate_pool_per_invoked']:.3f}")
-        print(f"Avg predicted mass | invoked     : {res['avg_predicted_error_mass_per_invoked']:.3f}")
-        print(f"Avg block-peak | invoked         : {res['avg_block_score_peak_per_invoked']:.3f}")
-        print(f"Avg queue max | invoked          : {res['avg_queue_max_per_invoked']:.3f}")
-        print(f"Avg zero-synd candidates | inv   : {res['avg_zero_synd_candidates_per_invoked']:.3f}")
-        print(f"Success pattern weight           : {res['avg_success_pattern_weight_given_rescue']:.3f}")
-        print(f"Success first-cost               : {res['avg_first_success_cost_given_rescue']:.3f}")
-        print(f"Avg stage-1 decoder us           : {res['avg_stage1_decoder_us']:.3f}")
-        print(f"Avg GRAND decoder us             : {res['avg_grand_decoder_us']:.3f}")
-        print(f"Avg total hybrid decoder us      : {res['avg_total_hybrid_decoder_us']:.3f}")
+    total_cpus = _detect_num_threads()
+    eval_workers = int(max(1, min(len(run_cfg.eval_snr_db), _env_int("EVAL_SNR_WORKERS", max(1, min(5, total_cpus // 12 if total_cpus >= 12 else 1))))))
+    threads_per_worker = int(max(1, total_cpus // eval_workers))
+    print(f"[RUN] eval_workers={eval_workers} threads_per_worker={threads_per_worker} total_cpus={total_cpus}")
 
-    prefix = f"aipog_it{run_cfg.stage1_iters:02d}_{_now_tag()}"
+    if eval_workers <= 1:
+        for snr_db in run_cfg.eval_snr_db:
+            _configure_runtime_threads(threads_per_worker)
+            res = evaluate_one_snr(run_cfg, code_cfg, float(snr_db), bit_student, block_student_obj, pattern_stats)
+            rows.append(res)
+            print("\n=== PPOG HYBRID EVAL ===")
+            print(f"SNR (dB)                         : {res['snr_db']:.2f}")
+            print(f"Frames simulated                 : {res['frames']}")
+            print(f"LDPC FER / BER                   : {res['ldpc_fer']:.6e} / {res['ldpc_ber']:.6e}")
+            print(f"Hybrid FER / BER                 : {res['hyb_fer']:.6e} / {res['hyb_ber']:.6e}")
+            print(f"Avg stage-1 iters/frame          : {res['avg_stage1_iters']:.3f}")
+            print(f"Failed frame rate                : {res['failed_frame_rate']:.6f}")
+            print(f"GRAND invocation rate            : {res['grand_invocation_rate']:.6f}")
+            print(f"GRAND rescue rate | invoked      : {res['grand_rescue_rate_given_invoked']:.6f}")
+            print(f"Info rescue rate | invoked       : {res['grand_info_rescue_rate_given_invoked']:.6f}")
+            print(f"Parity-only rescue | invoked     : {res['grand_parity_only_rescue_rate_given_invoked']:.6f}")
+            print(f"Avg patterns tested | invoked    : {res['avg_patterns_tested_per_invoked']:.3f}")
+            print(f"Avg candidate pool | invoked     : {res['avg_candidate_pool_per_invoked']:.3f}")
+            print(f"Avg predicted mass | invoked     : {res['avg_predicted_error_mass_per_invoked']:.3f}")
+            print(f"Avg block-peak | invoked         : {res['avg_block_score_peak_per_invoked']:.3f}")
+            print(f"Avg queue max | invoked          : {res['avg_queue_max_per_invoked']:.3f}")
+            print(f"Avg queue dropped | invoked      : {res['avg_queue_dropped_per_invoked']:.3f}")
+            print(f"Avg zero-synd candidates | inv   : {res['avg_zero_synd_candidates_per_invoked']:.3f}")
+            print(f"Success pattern weight           : {res['avg_success_pattern_weight_given_rescue']:.3f}")
+            print(f"Success first-cost               : {res['avg_first_success_cost_given_rescue']:.3f}")
+            print(f"Avg stage-1 decoder us           : {res['avg_stage1_decoder_us']:.3f}")
+            print(f"Avg GRAND decoder us             : {res['avg_grand_decoder_us']:.3f}")
+            print(f"Avg total hybrid decoder us      : {res['avg_total_hybrid_decoder_us']:.3f}")
+    else:
+        ctx = mp.get_context("spawn")
+        payloads = [(run_cfg, code_cfg, float(snr_db), bit_student, block_student_obj, pattern_stats, threads_per_worker) for snr_db in run_cfg.eval_snr_db]
+        with ProcessPoolExecutor(max_workers=eval_workers, mp_context=ctx) as ex:
+            fut_to_snr = {ex.submit(_eval_one_snr_worker, pl): pl[2] for pl in payloads}
+            for fut in as_completed(fut_to_snr):
+                res = fut.result()
+                rows.append(res)
+                print("\n=== PPOG HYBRID EVAL ===")
+                print(f"SNR (dB)                         : {res['snr_db']:.2f}")
+                print(f"Frames simulated                 : {res['frames']}")
+                print(f"LDPC FER / BER                   : {res['ldpc_fer']:.6e} / {res['ldpc_ber']:.6e}")
+                print(f"Hybrid FER / BER                 : {res['hyb_fer']:.6e} / {res['hyb_ber']:.6e}")
+                print(f"Avg stage-1 iters/frame          : {res['avg_stage1_iters']:.3f}")
+                print(f"Failed frame rate                : {res['failed_frame_rate']:.6f}")
+                print(f"GRAND invocation rate            : {res['grand_invocation_rate']:.6f}")
+                print(f"GRAND rescue rate | invoked      : {res['grand_rescue_rate_given_invoked']:.6f}")
+                print(f"Info rescue rate | invoked       : {res['grand_info_rescue_rate_given_invoked']:.6f}")
+                print(f"Parity-only rescue | invoked     : {res['grand_parity_only_rescue_rate_given_invoked']:.6f}")
+                print(f"Avg patterns tested | invoked    : {res['avg_patterns_tested_per_invoked']:.3f}")
+                print(f"Avg candidate pool | invoked     : {res['avg_candidate_pool_per_invoked']:.3f}")
+                print(f"Avg predicted mass | invoked     : {res['avg_predicted_error_mass_per_invoked']:.3f}")
+                print(f"Avg block-peak | invoked         : {res['avg_block_score_peak_per_invoked']:.3f}")
+                print(f"Avg queue max | invoked          : {res['avg_queue_max_per_invoked']:.3f}")
+                print(f"Avg queue dropped | invoked      : {res['avg_queue_dropped_per_invoked']:.3f}")
+                print(f"Avg zero-synd candidates | inv   : {res['avg_zero_synd_candidates_per_invoked']:.3f}")
+                print(f"Success pattern weight           : {res['avg_success_pattern_weight_given_rescue']:.3f}")
+                print(f"Success first-cost               : {res['avg_first_success_cost_given_rescue']:.3f}")
+                print(f"Avg stage-1 decoder us           : {res['avg_stage1_decoder_us']:.3f}")
+                print(f"Avg GRAND decoder us             : {res['avg_grand_decoder_us']:.3f}")
+                print(f"Avg total hybrid decoder us      : {res['avg_total_hybrid_decoder_us']:.3f}")
+        rows.sort(key=lambda r: float(r["snr_db"]))
+
+    prefix = f"ppog_it{run_cfg.stage1_iters:02d}_{_now_tag()}"
     summary_path = os.path.join(results_dir, f"{prefix}_summary.csv")
     raw_path = os.path.join(results_dir, f"{prefix}_raw.pkl")
     cfg_path = os.path.join(results_dir, f"{prefix}_config.json")
